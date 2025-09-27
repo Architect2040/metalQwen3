@@ -4,10 +4,6 @@
   <br>
 </div>
 
-### **🤖 Development with AI Coding Agents**
-
-**It's hard to imagine completing such a complex project without using coding agents such as Claude Code.** For evaluation, extensive testing framework development, and mostly automation - a project that could have taken 6 months to develop manually takes a month or two with AI assistance. **If you are not using Codex or Claude Code, you are definitely disadvantaged** in modern software development, especially for complex system programming tasks like GPU shader optimization and transformer inference engines.
-
 **: Full GPU Implementation Complete!** Metal GPU implementation of the Qwen3 transformer model on macOS with **complete Apple Silicon compute shader acceleration**. Built upon [Adrian Cable's qwen3.c](https://github.com/adriancable/qwen3.c) educational implementation, featuring complete Qwen3 architecture support including **QK-Norm**, **Grouped Query Attention**, **RoPE**, **Multi-Head Attention**, and **Q8_0 quantization**. Includes OpenAI-compatible API servers.
 
 ⚠️ **Performance Note**: Implementation complete but performance benchmarks pending verification with full testing suite.
@@ -17,7 +13,6 @@
 **👨‍💻 Author**: Shlomo Kashani
 **🏫 Affiliation**: Johns Hopkins University, Maryland U.S.A.
 **🏢 Organization**: QNeura.ai
-
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![API](https://img.shields.io/badge/API-OpenAI%20Compatible-blue)]()
@@ -842,4 +837,5 @@ Special thanks to:
 
 
 *Built with ❤️ for Apple Silicon and the open-source AI community*
+
 
