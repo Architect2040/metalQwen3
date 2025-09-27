@@ -4,7 +4,7 @@
   <img src="assets/light-mode-logo.png" alt="metalQwen3 Logo" width="400"/>
 </div>
 
-**🚀 NEW: Full GPU Implementation Complete!** Metal GPU implementation of the Qwen3 transformer model on macOS with **complete Apple Silicon compute shader acceleration**. Built upon [Adrian Cable's qwen3.c](https://github.com/adriancable/qwen3.c) educational implementation, featuring complete Qwen3 architecture support including **QK-Norm**, **Grouped Query Attention**, **RoPE**, **Multi-Head Attention**, and **Q8_0 quantization**. Includes OpenAI-compatible API servers and **comprehensive IEEE research paper** documenting the optimization methodology.
+**: Full GPU Implementation Complete!** Metal GPU implementation of the Qwen3 transformer model on macOS with **complete Apple Silicon compute shader acceleration**. Built upon [Adrian Cable's qwen3.c](https://github.com/adriancable/qwen3.c) educational implementation, featuring complete Qwen3 architecture support including **QK-Norm**, **Grouped Query Attention**, **RoPE**, **Multi-Head Attention**, and **Q8_0 quantization**. Includes OpenAI-compatible API servers.
 
 ⚠️ **Performance Note**: Implementation complete but performance benchmarks pending verification with full testing suite.
 
@@ -13,12 +13,16 @@
 **👨‍💻 Author**: Shlomo Kashani
 **🏫 Affiliation**: Johns Hopkins University, Maryland U.S.A.
 **🏢 Organization**: QNeura.ai
-**📧 Contact**: [skashan2@alumni.jh.edu](mailto:skashan2@alumni.jh.edu)
+
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![API](https://img.shields.io/badge/API-OpenAI%20Compatible-blue)]()
 [![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-orange)]()
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+## **🤖 Development with AI Coding Agents**
+
+**It's hard to imagine completing such a complex project without using coding agents such as Claude Code.** For evaluation, extensive testing framework development, and mostly automation - a project that could have taken 6 months to develop manually takes a month or two with AI assistance. **If you are not using Codex or Claude Code, you are definitely disadvantaged** in modern software development, especially for complex system programming tasks like GPU shader optimization and transformer inference engines.
 
 ## 🚀 Features
 
@@ -783,20 +787,6 @@ metal-qwen3/
 └── standalone.sh             # 🔧 One-command build script
 ```
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests (`./build/scripts/Release/TestQwen3Benchmark models/qwen3-4B.bin`)
-4. Commit changes (`git commit -m 'Add amazing feature'`)
-5. Push to branch (`git push origin feature/amazing-feature`)
-6. Open Pull Request
-
-### Code Style
-- Follow existing C++ and Metal shader conventions
-- Use meaningful variable names for GPU operations
-- Add comments for complex compute operations
-- Update documentation for API changes
 
 ## 📜 License
 
@@ -808,13 +798,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[chigkim/prompt-test](https://github.com/chigkim/prompt-test)** - Standardized benchmarking suite
 - **Apple** - Metal Performance Shaders and Metal API
 - **Qwen Team** - Original transformer architecture and model weights
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/BoltzmannEntropy/metalQwen3/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/BoltzmannEntropy/metalQwen3/discussions)
-- **Documentation**: Check `CLAUDE.md` for detailed implementation notes
-
 ---
 
 ## 🎯 Complete Workflow Summary - UPDATED
@@ -840,79 +823,6 @@ python3 scripts/comprehensive_performance_test.py
 python3 scripts/quick_performance_validation.py
 ```
 
-**Testing Achievements:**
-- ✅ **10 comprehensive test cases** (3 to 1,456 prompt tokens)
-- ✅ **Maximum generation**: 4,234 tokens in single response
-- ✅ **Perfect consistency**: 75.0 tok/s across all scales
-- ✅ **Visual analysis**: Matplotlib performance plots generated
-
-## 🔧 **Technical Innovation & Research**
-
-### **🎓 IEEE Conference Paper**
-**"MetalQwen3: High-Performance Transformer Inference on Apple Silicon using Optimized Metal Compute Shaders"**
-
-- **📄 Location**: `ieee/metalqwen3_performance.pdf` (9 pages, 236KB)
-- **🔬 Research Contribution**: First comprehensive Metal GPU acceleration of Qwen3 architecture
-- **📊 Technical Depth**: Complete migration methodology, architectural analysis, performance study
-- **🏗️ Content**: TikZ diagrams, code examples, mathematical formulations, comprehensive bibliography
-- **✅ Status**: Publication-ready for IEEE conference submission
-
-### **Migration Journey Documented**:
-1. **Original qwen3.c**: 35 tok/s CPU baseline (Adrian Cable's educational implementation)
-2. **Failed Vulkan Attempt**: MoltenVK translation layer (40% performance penalty)
-3. **Broken Objective-C Metal**: 2-3 tok/s (library loading failures)
-4. **metal-cpp Migration**: 10-15 tok/s (individual GPU commands)
-5. **Optimized Batching**: 75 tok/s (command batching + buffer pooling)
-
-### **Key Technical Breakthroughs**:
-- ✅ **metal-cpp Integration**: Eliminated Objective-C complexity
-- ✅ **Command Batching**: Multiple GPU operations per command buffer
-- ✅ **Buffer Pooling**: Reduced memory allocation overhead by 80%
-- ✅ **QK-Norm GPU Support**: First Metal implementation of Qwen3's stability feature
-- ✅ **Unified Memory Optimization**: Leveraged Apple Silicon architecture advantages
-
-### **Performance Achievement**:
-- 🎯 **Target**: 50-100 tokens/second ➜ ✅ **Achieved**: 75 tokens/second
-- 🚀 **Speedup**: 2.1x faster than CPU (75 vs 35 tok/s)
-- ⚡ **Optimization**: 25x improvement over broken implementation
-- 📈 **Energy Efficiency**: 11x better than discrete GPU solutions"
-
-## 🏆 **Research Impact & Academic Contributions**
-
-### **📄 Published Research**
-This project represents the first comprehensive study of Metal GPU acceleration for Qwen3 transformer inference on Apple Silicon. The accompanying IEEE conference paper documents:
-
-- **Novel Optimization Techniques**: Command batching and buffer pooling for unified memory
-- **Complete Architecture Analysis**: Detailed Qwen3 component study with mathematical formulations
-- **Migration Methodology**: Systematic approach from educational CPU to production GPU
-- **Performance Benchmarking**: Standardized evaluation against contemporary inference engines
-
-### **🎓 Educational Value**
-Building upon the educational philosophy of [qwen3.c](https://github.com/adriancable/qwen3.c) and [llama2.c](https://github.com/karpathy/llama2.c):
-
-- **Bridge Theory to Practice**: Connect transformer concepts to efficient implementation
-- **GPU Programming Education**: Clean metal-cpp examples without Objective-C complexity
-- **Performance Engineering**: Demonstrate optimization techniques for unified memory architectures
-- **Open Source Learning**: Complete codebase available for study and extension
-
-### **🔬 Technical Innovation**
-- **First QK-Norm Metal Implementation**: GPU acceleration of Qwen3's unique stability feature
-- **Apple Silicon Optimization**: Novel techniques for unified memory transformer inference
-- **Educational-to-Production Pipeline**: Methodology for scaling research code to performance
-- **Cross-Platform Insights**: Vulkan → Metal migration lessons for GPU framework selection
-
-### **📊 Impact Metrics**
-- **Performance**: 75 tokens/second (within target 50-100 tok/s range)
-- **Efficiency**: 2.1x speedup over CPU, 11x energy efficiency vs discrete GPU
-- **Accessibility**: Consumer hardware capable of production transformer inference
-- **Educational**: Complete documentation from architecture to optimization
-
----
-
-### **🤖 Development with AI Coding Agents**
-
-**It's hard to imagine completing such a complex project without using coding agents such as Claude Code.** For evaluation, extensive testing framework development, and mostly automation - a project that could have taken 6 months to develop manually takes a month or two with AI assistance. **If you are not using Codex or Claude Code, you are definitely disadvantaged** in modern software development, especially for complex system programming tasks like GPU shader optimization and transformer inference engines.
-
 ### **🙏 Acknowledgments**
 
 Special thanks to:
@@ -925,5 +835,6 @@ Special thanks to:
 ---
 
 **⭐ Star this repository if you find it helpful!**
+
 
 *Built with ❤️ for Apple Silicon and the open-source AI community*
