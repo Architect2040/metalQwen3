@@ -4,7 +4,9 @@
   <br>
 </div>
 
-**: Full GPU Implementation Complete!** Metal GPU implementation of the Qwen3 transformer model on macOS with **complete Apple Silicon compute shader acceleration**. Built upon [Adrian Cable's qwen3.c](https://github.com/adriancable/qwen3.c) educational implementation, featuring complete Qwen3 architecture support including **QK-Norm**, **Grouped Query Attention**, **RoPE**, **Multi-Head Attention**, and **Q8_0 quantization**. Includes OpenAI-compatible API servers.
+**Full GPU Implementation Complete!** Metal GPU implementation of the Qwen3 transformer model on macOS with **complete Apple Silicon compute shader acceleration**. 
+
+Built upon [Adrian Cable's qwen3.c](https://github.com/adriancable/qwen3.c) educational implementation, featuring complete Qwen3 architecture support including **QK-Norm**, **Grouped Query Attention**, **RoPE**, **Multi-Head Attention**, and **Q8_0 quantization**. Includes OpenAI-compatible API servers.
 
 ⚠️ **Performance Note**: Implementation complete but performance benchmarks pending verification with full testing suite.
 
@@ -837,5 +839,6 @@ Special thanks to:
 
 
 *Built with ❤️ for Apple Silicon and the open-source AI community*
+
 
 
