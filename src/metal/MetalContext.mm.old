@@ -1,0 +1,876 @@
+#import <Metal/Metal.h>
+#import <Foundation/Foundation.h>
+#include "MetalContext.h"
+#include <iostream>
+
+MetalContext::MetalContext() : initialized(false), device(nil), commandQueue(nil) {
+}
+
+MetalContext::~MetalContext() {
+    cleanup();
+}
+
+bool MetalContext::initialize() {
+    @autoreleasepool {
+        // Get the default Metal device
+        device = MTLCreateSystemDefaultDevice();
+        if (!device) {
+            logError("Failed to create Metal device");
+            return false;
+        }
+
+        // Create command queue
+        commandQueue = [(__bridge id<MTLDevice>)device newCommandQueue];
+        if (!commandQueue) {
+            logError("Failed to create command queue");
+            return false;
+        }
+
+        initialized = true;
+
+        NSLog(@"Metal Context initialized successfully");
+        NSLog(@"Device: %@", [(__bridge id<MTLDevice>)device name]);
+
+        return true;
+    }
+}
+
+void MetalContext::cleanup() {
+    if (commandQueue) {
+        CFRelease(commandQueue);
+        commandQueue = nil;
+    }
+    if (device) {
+        CFRelease(device);
+        device = nil;
+    }
+    initialized = false;
+}
+
+void* MetalContext::createBuffer(size_t size, const void* data) {
+    if (!initialized) return nullptr;
+
+    @autoreleasepool {
+        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
+        id<MTLBuffer> buffer;
+
+        if (data) {
+            buffer = [mtlDevice newBufferWithBytes:data
+                                           length:size
+                                          options:MTLResourceStorageModeShared];
+        } else {
+            buffer = [mtlDevice newBufferWithLength:size
+                                            options:MTLResourceStorageModeShared];
+        }
+
+        return buffer ? (__bridge_retained void*)buffer : nullptr;
+    }
+}
+
+void MetalContext::releaseBuffer(void* buffer) {
+    if (buffer) {
+        CFRelease(buffer);
+    }
+}
+
+void* MetalContext::createComputePipeline(const std::string& shaderName) {
+    if (!initialized) return nullptr;
+
+    @autoreleasepool {
+        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
+
+        // Load the Metal library (placeholder - needs actual implementation)
+        NSString *libraryPath = [[NSBundle mainBundle] pathForResource:@(shaderName.c_str()) ofType:@"metallib"];
+        if (!libraryPath) {
+            logError("Failed to find Metal library: " + shaderName);
+            return nullptr;
+        }
+
+        NSError *error = nil;
+        id<MTLLibrary> library = [mtlDevice newLibraryWithFile:libraryPath error:&error];
+        if (!library) {
+            logError("Failed to load Metal library: " + std::string([[error localizedDescription] UTF8String]));
+            return nullptr;
+        }
+
+        id<MTLFunction> function = [library newFunctionWithName:@"main"];
+        if (!function) {
+            logError("Failed to find function 'main' in shader: " + shaderName);
+            return nullptr;
+        }
+
+        id<MTLComputePipelineState> pipelineState = [mtlDevice newComputePipelineStateWithFunction:function error:&error];
+        if (!pipelineState) {
+            logError("Failed to create pipeline state: " + std::string([[error localizedDescription] UTF8String]));
+            return nullptr;
+        }
+
+        return pipelineState ? (__bridge_retained void*)pipelineState : nullptr;
+    }
+}
+
+void MetalContext::releaseComputePipeline(void* pipeline) {
+    if (pipeline) {
+        CFRelease(pipeline);
+    }
+}
+
+void* MetalContext::createCommandBuffer() {
+    if (!initialized) return nullptr;
+
+    @autoreleasepool {
+        id<MTLCommandQueue> mtlQueue = (__bridge id<MTLCommandQueue>)commandQueue;
+        id<MTLCommandBuffer> commandBuffer = [mtlQueue commandBuffer];
+        return commandBuffer ? (__bridge_retained void*)commandBuffer : nullptr;
+    }
+}
+
+void MetalContext::commitCommandBuffer(void* commandBuffer) {
+    if (!commandBuffer) return;
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> mtlCommandBuffer = (__bridge id<MTLCommandBuffer>)commandBuffer;
+        [mtlCommandBuffer commit];
+    }
+}
+
+void MetalContext::waitForCompletion(void* commandBuffer) {
+    if (!commandBuffer) return;
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> mtlCommandBuffer = (__bridge id<MTLCommandBuffer>)commandBuffer;
+        [mtlCommandBuffer waitUntilCompleted];
+    }
+}
+
+void MetalContext::logError(const std::string& message) {
+    std::cerr << "MetalContext Error: " << message << std::endl;
+    NSLog(@"MetalContext Error: %s", message.c_str());
+}
+
+// Metal shader execution implementations
+void MetalContext::executeRMSNorm(float* output, const float* input, const float* weight, int size) {
+    @autoreleasepool {
+        if (!initialized) {
+            throw std::runtime_error("Metal context not initialized");
+        }
+
+        // Load Metal shader library - try multiple possible paths
+        NSError* error = nil;
+        id<MTLLibrary> library = nil;
+
+        // Get application path for resource loading
+        NSBundle* mainBundle = [NSBundle mainBundle];
+        NSString* appPath = [mainBundle bundlePath];
+
+        // Path 1: Try executable directory (Release or Debug)
+        NSString* execPath = [appPath stringByDeletingLastPathComponent];
+        NSString* shaderPath1 = [execPath stringByAppendingPathComponent:@"rmsnorm.metallib"];
+        library = [(__bridge id<MTLDevice>)device newLibraryWithFile:shaderPath1 error:&error];
+
+        // Path 2: Try app bundle Resources
+        if (!library) {
+            NSString* resourcePath = [mainBundle pathForResource:@"rmsnorm" ofType:@"metallib"];
+            if (resourcePath) {
+                library = [(__bridge id<MTLDevice>)device newLibraryWithFile:resourcePath error:&error];
+            }
+        }
+
+        // Path 3: Try hardcoded absolute paths (last resort)
+        if (!library) {
+            NSString* shaderPath3 = @"build/scripts/Release/rmsnorm.metallib";
+            library = [(__bridge id<MTLDevice>)device newLibraryWithFile:shaderPath3 error:&error];
+        }
+
+        // Path 3: Try relative paths
+        if (!library) {
+            NSArray* possiblePaths = @[
+                @"rmsnorm.metallib",
+                @"shaders/rmsnorm.metallib",
+                @"../rmsnorm.metallib",
+                @"./build/rmsnorm.metallib"
+            ];
+
+            for (NSString* path in possiblePaths) {
+                library = [(__bridge id<MTLDevice>)device newLibraryWithFile:path error:&error];
+                if (library) break;
+            }
+        }
+
+        if (!library) {
+            throw std::runtime_error("Failed to load rmsnorm Metal library");
+        }
+
+        id<MTLFunction> function = [library newFunctionWithName:@"rmsnorm_kernel"];
+        id<MTLComputePipelineState> pipeline = [(__bridge id<MTLDevice>)device newComputePipelineStateWithFunction:function error:&error];
+
+        if (!pipeline) {
+            throw std::runtime_error("Failed to create rmsnorm pipeline");
+        }
+
+
+
+        // Create Metal buffers
+        id<MTLBuffer> inputBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:input length:size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> weightBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:weight length:size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> outputBuffer = [(__bridge id<MTLDevice>)device newBufferWithLength:size*sizeof(float) options:MTLResourceStorageModeShared];
+
+        uint usize = (uint)size;
+        float eps = 1e-6f;
+        id<MTLBuffer> sizeBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&usize length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> epsBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&eps length:sizeof(float) options:MTLResourceStorageModeShared];
+
+        // Execute Metal compute shader
+        id<MTLCommandBuffer> commandBuffer = [(__bridge id<MTLCommandQueue>)commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:inputBuffer offset:0 atIndex:0];
+        [encoder setBuffer:weightBuffer offset:0 atIndex:1];
+        [encoder setBuffer:outputBuffer offset:0 atIndex:2];
+        [encoder setBuffer:sizeBuffer offset:0 atIndex:3];
+        [encoder setBuffer:epsBuffer offset:0 atIndex:4];
+
+        // Set threadgroup memory size for parallel reduction (256 floats)
+        [encoder setThreadgroupMemoryLength:256 * sizeof(float) atIndex:0];
+
+        // Use single threadgroup with 256 threads for parallel reduction
+        MTLSize threadsPerThreadgroup = MTLSizeMake(256, 1, 1);
+        MTLSize threadgroups = MTLSizeMake(1, 1, 1);
+        [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+
+        // Copy result back to output
+        memcpy(output, [outputBuffer contents], size * sizeof(float));
+    }
+}
+
+void MetalContext::executeSoftmax(float* x, int size) {
+    @autoreleasepool {
+        if (!initialized) {
+            // CPU fallback
+            float max_val = 0;
+            for (int i = 0; i < size; i++)
+                if (x[i] > max_val)
+                    max_val = x[i];
+
+            float sum = 0;
+            for (int i = 0; i < size; i++) {
+                x[i] = expf(x[i] - max_val);
+                sum += x[i];
+            }
+
+            for (int i = 0; i < size; i++)
+                x[i] /= sum;
+            return;
+        }
+
+        // Load softmax Metal shader - try multiple paths
+        NSError* error = nil;
+        id<MTLLibrary> library = nil;
+
+        NSString* currentPath = [[NSFileManager defaultManager] currentDirectoryPath];
+        NSArray* possiblePaths = @[
+            [currentPath stringByAppendingPathComponent:@"build/scripts/Release/softmax.metallib"],
+            @"/Volumes/SSD4tb/Dropbox/Publications/papers/m-os/build/scripts/Release/softmax.metallib",
+            @"softmax.metallib",
+            @"shaders/softmax.metallib"
+        ];
+
+        for (NSString* path in possiblePaths) {
+            library = [(__bridge id<MTLDevice>)device newLibraryWithFile:path error:&error];
+            if (library) break;
+        }
+
+        if (!library) {
+            NSLog(@"Failed to load softmax Metal library: %@", error);
+            // CPU fallback
+            float max_val = 0;
+            for (int i = 0; i < size; i++)
+                if (x[i] > max_val)
+                    max_val = x[i];
+
+            float sum = 0;
+            for (int i = 0; i < size; i++) {
+                x[i] = expf(x[i] - max_val);
+                sum += x[i];
+            }
+
+            for (int i = 0; i < size; i++)
+                x[i] /= sum;
+            return;
+        }
+
+        id<MTLFunction> function = [library newFunctionWithName:@"softmax_kernel"];
+        id<MTLComputePipelineState> pipeline = [(__bridge id<MTLDevice>)device newComputePipelineStateWithFunction:function error:&error];
+
+        if (!pipeline) {
+            NSLog(@"Failed to create softmax pipeline: %@", error);
+            // CPU fallback
+            float max_val = 0;
+            for (int i = 0; i < size; i++)
+                if (x[i] > max_val)
+                    max_val = x[i];
+
+            float sum = 0;
+            for (int i = 0; i < size; i++) {
+                x[i] = expf(x[i] - max_val);
+                sum += x[i];
+            }
+
+            for (int i = 0; i < size; i++)
+                x[i] /= sum;
+            return;
+        }
+
+
+
+        // Create Metal buffers
+        id<MTLBuffer> inputBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:x length:size*sizeof(float) options:MTLResourceStorageModeShared];
+        uint usize = (uint)size;
+        id<MTLBuffer> sizeBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&usize length:sizeof(uint) options:MTLResourceStorageModeShared];
+
+        // Execute Metal compute shader
+        id<MTLCommandBuffer> commandBuffer = [(__bridge id<MTLCommandQueue>)commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:inputBuffer offset:0 atIndex:0];
+        [encoder setBuffer:sizeBuffer offset:0 atIndex:1];
+
+        // Set threadgroup memory size for parallel reduction (256 floats)
+        [encoder setThreadgroupMemoryLength:256 * sizeof(float) atIndex:0];
+
+        // Use single threadgroup with 256 threads for parallel reduction
+        MTLSize threadsPerThreadgroup = MTLSizeMake(256, 1, 1);
+        MTLSize threadgroups = MTLSizeMake(1, 1, 1);
+        [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+
+        // Copy result back to x
+        memcpy(x, [inputBuffer contents], size * sizeof(float));
+    }
+}
+
+void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, const float* x_s,
+                                         const int8_t* w_q, const float* w_s, int n, int d, int group_size) {
+    @autoreleasepool {
+        if (!initialized) {
+            // CPU fallback
+            for (int i = 0; i < d; i++) {
+                float val = 0;
+                int in = i * n;
+                for (int j = 0; j <= n - group_size; j += group_size) {
+                    int32_t ival = 0;
+                    for (int k = 0; k < group_size; k++)
+                        ival += x_q[j + k] * w_q[in + j + k];
+                    val += ((float) ival) * w_s[(in + j) / group_size] * x_s[j / group_size];
+                }
+                output[i] = val;
+            }
+            return;
+        }
+
+        // Load quantized_matmul Metal shader - try multiple paths
+        NSError* error = nil;
+        id<MTLLibrary> library = nil;
+
+        NSString* currentPath = [[NSFileManager defaultManager] currentDirectoryPath];
+        NSArray* possiblePaths = @[
+            [currentPath stringByAppendingPathComponent:@"build/scripts/Release/quantized_matmul.metallib"],
+            @"/Volumes/SSD4tb/Dropbox/Publications/papers/m-os/build/scripts/Release/quantized_matmul.metallib",
+            @"quantized_matmul.metallib",
+            @"shaders/quantized_matmul.metallib"
+        ];
+
+        for (NSString* path in possiblePaths) {
+            library = [(__bridge id<MTLDevice>)device newLibraryWithFile:path error:&error];
+            if (library) break;
+        }
+
+        if (!library) {
+            NSLog(@"Failed to load quantized_matmul Metal library: %@", error);
+            // CPU fallback
+            for (int i = 0; i < d; i++) {
+                float val = 0;
+                int in = i * n;
+                for (int j = 0; j <= n - group_size; j += group_size) {
+                    int32_t ival = 0;
+                    for (int k = 0; k < group_size; k++)
+                        ival += x_q[j + k] * w_q[in + j + k];
+                    val += ((float) ival) * w_s[(in + j) / group_size] * x_s[j / group_size];
+                }
+                output[i] = val;
+            }
+            return;
+        }
+
+        id<MTLFunction> function = [library newFunctionWithName:@"quantized_matmul_kernel"];
+        id<MTLComputePipelineState> pipeline = [(__bridge id<MTLDevice>)device newComputePipelineStateWithFunction:function error:&error];
+
+        if (!pipeline) {
+            NSLog(@"Failed to create quantized_matmul pipeline: %@", error);
+            // CPU fallback
+            for (int i = 0; i < d; i++) {
+                float val = 0;
+                int in = i * n;
+                for (int j = 0; j <= n - group_size; j += group_size) {
+                    int32_t ival = 0;
+                    for (int k = 0; k < group_size; k++)
+                        ival += x_q[j + k] * w_q[in + j + k];
+                    val += ((float) ival) * w_s[(in + j) / group_size] * x_s[j / group_size];
+                }
+                output[i] = val;
+            }
+            return;
+        }
+
+
+
+        // Create Metal buffers for quantized matmul
+        id<MTLBuffer> xBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:x_q length:n*sizeof(int8_t) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> wBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:w_q length:d*n*sizeof(int8_t) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> xScalesBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:x_s length:(n/group_size)*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> wScalesBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:w_s length:(d*n/group_size)*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> outputBuffer = [(__bridge id<MTLDevice>)device newBufferWithLength:d*sizeof(float) options:MTLResourceStorageModeShared];
+
+        uint uM = (uint)d, uN = (uint)1, uK = (uint)n, uGroupSize = (uint)group_size;
+        id<MTLBuffer> mBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uM length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> nBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uN length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> kBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uK length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> groupSizeBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uGroupSize length:sizeof(uint) options:MTLResourceStorageModeShared];
+
+        // Execute Metal compute shader
+        id<MTLCommandBuffer> commandBuffer = [(__bridge id<MTLCommandQueue>)commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:xBuffer offset:0 atIndex:0];
+        [encoder setBuffer:wBuffer offset:0 atIndex:1];
+        [encoder setBuffer:xScalesBuffer offset:0 atIndex:2];
+        [encoder setBuffer:wScalesBuffer offset:0 atIndex:3];
+        [encoder setBuffer:outputBuffer offset:0 atIndex:4];
+        [encoder setBuffer:mBuffer offset:0 atIndex:5];
+        [encoder setBuffer:nBuffer offset:0 atIndex:6];
+        [encoder setBuffer:kBuffer offset:0 atIndex:7];
+        [encoder setBuffer:groupSizeBuffer offset:0 atIndex:8];
+
+        MTLSize threadsPerThreadgroup = MTLSizeMake(16, 16, 1);
+        MTLSize threadgroups = MTLSizeMake((d + 15) / 16, 1, 1);
+        [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+
+        // Copy result back
+        memcpy(output, [outputBuffer contents], d * sizeof(float));
+    }
+}
+
+void MetalContext::executeSwiGLU(float* hb, const float* hb2, int hidden_dim) {
+    @autoreleasepool {
+        if (!initialized) {
+            // CPU fallback
+            for (int i = 0; i < hidden_dim; i++)
+                hb[i] *= hb2[i] * (1.0f / (1.0f + expf(-hb[i])));
+            return;
+        }
+
+        // Load swiglu Metal shader - try multiple paths
+        NSError* error = nil;
+        id<MTLLibrary> library = nil;
+
+        NSString* currentPath = [[NSFileManager defaultManager] currentDirectoryPath];
+        NSArray* possiblePaths = @[
+            [currentPath stringByAppendingPathComponent:@"build/scripts/Release/swiglu.metallib"],
+            @"/Volumes/SSD4tb/Dropbox/Publications/papers/m-os/build/scripts/Release/swiglu.metallib",
+            @"swiglu.metallib",
+            @"shaders/swiglu.metallib"
+        ];
+
+        for (NSString* path in possiblePaths) {
+            library = [(__bridge id<MTLDevice>)device newLibraryWithFile:path error:&error];
+            if (library) break;
+        }
+
+        if (!library) {
+            NSLog(@"Failed to load swiglu Metal library: %@", error);
+            // CPU fallback
+            for (int i = 0; i < hidden_dim; i++)
+                hb[i] *= hb2[i] * (1.0f / (1.0f + expf(-hb[i])));
+            return;
+        }
+
+        id<MTLFunction> function = [library newFunctionWithName:@"swiglu_kernel"];
+        id<MTLComputePipelineState> pipeline = [(__bridge id<MTLDevice>)device newComputePipelineStateWithFunction:function error:&error];
+
+        if (!pipeline) {
+            NSLog(@"Failed to create swiglu pipeline: %@", error);
+            // CPU fallback
+            for (int i = 0; i < hidden_dim; i++)
+                hb[i] *= hb2[i] * (1.0f / (1.0f + expf(-hb[i])));
+            return;
+        }
+
+
+        // Create Metal buffers
+        id<MTLBuffer> hbBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:hb length:hidden_dim*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> hb2Buffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:hb2 length:hidden_dim*sizeof(float) options:MTLResourceStorageModeShared];
+        uint usize = (uint)hidden_dim;
+        id<MTLBuffer> sizeBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&usize length:sizeof(uint) options:MTLResourceStorageModeShared];
+
+        // Execute Metal compute shader
+        id<MTLCommandBuffer> commandBuffer = [(__bridge id<MTLCommandQueue>)commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:hbBuffer offset:0 atIndex:0];
+        [encoder setBuffer:hb2Buffer offset:0 atIndex:1];
+        [encoder setBuffer:sizeBuffer offset:0 atIndex:2];
+
+        MTLSize threadsPerThreadgroup = MTLSizeMake(32, 1, 1);
+        MTLSize threadgroups = MTLSizeMake((hidden_dim + 31) / 32, 1, 1);
+        [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+
+        // Copy result back to hb
+        memcpy(hb, [hbBuffer contents], hidden_dim * sizeof(float));
+    }
+}
+
+void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_heads, int n_kv_heads,
+                              const float* q_norm_weights, const float* k_norm_weights) {
+    @autoreleasepool {
+        if (!initialized) {
+            // CPU fallback - Q-RMSNorm + RoPE for Q heads
+            for (int h = 0; h < n_heads; h++) {
+                float *q_head = q + h * head_dim;
+
+                // RMS norm for Q
+                executeRMSNorm(q_head, q_head, q_norm_weights, head_dim);
+
+                // RoPE for Q
+                for (int j = 0; j < head_dim/2; j++) {
+                    float freq = powf(1e6, -(float)j / (head_dim/2));
+                    float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+                    float x = q_head[j];
+                    float y = q_head[j + head_dim/2];
+                    q_head[j] = x * cos_freq - y * sin_freq;
+                    q_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
+                }
+            }
+
+            // K-RMSNorm + RoPE for K heads
+            for (int h = 0; h < n_kv_heads; h++) {
+                float *k_head = k + h * head_dim;
+
+                // RMS norm for K
+                executeRMSNorm(k_head, k_head, k_norm_weights, head_dim);
+
+                // RoPE for K
+                for (int j = 0; j < head_dim/2; j++) {
+                    float freq = powf(1e6, -(float)j / (head_dim/2));
+                    float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+                    float x = k_head[j];
+                    float y = k_head[j + head_dim/2];
+                    k_head[j] = x * cos_freq - y * sin_freq;
+                    k_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
+                }
+            }
+            return;
+        }
+
+        // Load rope Metal shader - try multiple paths
+        NSError* error = nil;
+        id<MTLLibrary> library = nil;
+
+        NSString* currentPath = [[NSFileManager defaultManager] currentDirectoryPath];
+        NSArray* possiblePaths = @[
+            [currentPath stringByAppendingPathComponent:@"build/scripts/Release/rope.metallib"],
+            @"/Volumes/SSD4tb/Dropbox/Publications/papers/m-os/build/scripts/Release/rope.metallib",
+            @"rope.metallib",
+            @"shaders/rope.metallib"
+        ];
+
+        for (NSString* path in possiblePaths) {
+            library = [(__bridge id<MTLDevice>)device newLibraryWithFile:path error:&error];
+            if (library) break;
+        }
+
+        if (!library) {
+            NSLog(@"Failed to load rope Metal library: %@", error);
+            // CPU fallback - Q-RMSNorm + RoPE for Q heads
+            for (int h = 0; h < n_heads; h++) {
+                float *q_head = q + h * head_dim;
+
+                // RMS norm for Q
+                executeRMSNorm(q_head, q_head, q_norm_weights, head_dim);
+
+                // RoPE for Q
+                for (int j = 0; j < head_dim/2; j++) {
+                    float freq = powf(1e6, -(float)j / (head_dim/2));
+                    float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+                    float x = q_head[j];
+                    float y = q_head[j + head_dim/2];
+                    q_head[j] = x * cos_freq - y * sin_freq;
+                    q_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
+                }
+            }
+
+            // K-RMSNorm + RoPE for K heads
+            for (int h = 0; h < n_kv_heads; h++) {
+                float *k_head = k + h * head_dim;
+
+                // RMS norm for K
+                executeRMSNorm(k_head, k_head, k_norm_weights, head_dim);
+
+                // RoPE for K
+                for (int j = 0; j < head_dim/2; j++) {
+                    float freq = powf(1e6, -(float)j / (head_dim/2));
+                    float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+                    float x = k_head[j];
+                    float y = k_head[j + head_dim/2];
+                    k_head[j] = x * cos_freq - y * sin_freq;
+                    k_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
+                }
+            }
+            return;
+        }
+
+        id<MTLFunction> function = [library newFunctionWithName:@"rope_kernel"];
+        id<MTLComputePipelineState> pipeline = [(__bridge id<MTLDevice>)device newComputePipelineStateWithFunction:function error:&error];
+
+        if (!pipeline) {
+            NSLog(@"Failed to create rope pipeline: %@", error);
+            // CPU fallback (same as above)
+            for (int h = 0; h < n_heads; h++) {
+                float *q_head = q + h * head_dim;
+                executeRMSNorm(q_head, q_head, q_norm_weights, head_dim);
+                for (int j = 0; j < head_dim/2; j++) {
+                    float freq = powf(1e6, -(float)j / (head_dim/2));
+                    float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+                    float x = q_head[j];
+                    float y = q_head[j + head_dim/2];
+                    q_head[j] = x * cos_freq - y * sin_freq;
+                    q_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
+                }
+            }
+            for (int h = 0; h < n_kv_heads; h++) {
+                float *k_head = k + h * head_dim;
+                executeRMSNorm(k_head, k_head, k_norm_weights, head_dim);
+                for (int j = 0; j < head_dim/2; j++) {
+                    float freq = powf(1e6, -(float)j / (head_dim/2));
+                    float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+                    float x = k_head[j];
+                    float y = k_head[j + head_dim/2];
+                    k_head[j] = x * cos_freq - y * sin_freq;
+                    k_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
+                }
+            }
+            return;
+        }
+
+
+
+        // Create Metal buffers
+        int q_total_size = n_heads * head_dim;
+        int k_total_size = n_kv_heads * head_dim;
+
+        id<MTLBuffer> qBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:q length:q_total_size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> kBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:k length:k_total_size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> qNormBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:q_norm_weights length:head_dim*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> kNormBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:k_norm_weights length:head_dim*sizeof(float) options:MTLResourceStorageModeShared];
+
+        uint uHeadDim = (uint)head_dim, uPos = (uint)pos, uNHeads = (uint)n_heads, uNKvHeads = (uint)n_kv_heads;
+        id<MTLBuffer> headDimBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uHeadDim length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> posBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uPos length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> nHeadsBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uNHeads length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> nKvHeadsBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uNKvHeads length:sizeof(uint) options:MTLResourceStorageModeShared];
+
+        // Execute Metal compute shader
+        id<MTLCommandBuffer> commandBuffer = [(__bridge id<MTLCommandQueue>)commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:qBuffer offset:0 atIndex:0];
+        [encoder setBuffer:kBuffer offset:0 atIndex:1];
+        [encoder setBuffer:qNormBuffer offset:0 atIndex:2];
+        [encoder setBuffer:kNormBuffer offset:0 atIndex:3];
+        [encoder setBuffer:headDimBuffer offset:0 atIndex:4];
+        [encoder setBuffer:posBuffer offset:0 atIndex:5];
+        [encoder setBuffer:nHeadsBuffer offset:0 atIndex:6];
+        [encoder setBuffer:nKvHeadsBuffer offset:0 atIndex:7];
+
+        MTLSize threadsPerThreadgroup = MTLSizeMake(16, 16, 1);
+        MTLSize threadgroups = MTLSizeMake((n_heads + 15) / 16, (head_dim + 15) / 16, 1);
+        [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+
+        // Copy results back
+        memcpy(q, [qBuffer contents], q_total_size * sizeof(float));
+        memcpy(k, [kBuffer contents], k_total_size * sizeof(float));
+    }
+}
+
+void MetalContext::executeAttention(float* xb, const float* q, float* att, float* key_cache, float* value_cache,
+                                   int pos, int head_dim, int n_heads, int n_kv_heads, int seq_len, int kv_dim, uint64_t loff, int kv_mul) {
+    @autoreleasepool {
+        if (!initialized) {
+            // CPU fallback
+            for (int h = 0; h < n_heads; h++) {
+                const float *q_head = q + h * head_dim;
+                float *att_head = att + h * seq_len;
+
+                for (int t = 0; t <= pos; t++) {
+                    const float *k = key_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+                    float score = 0;
+                    for (int i = 0; i < head_dim; i++)
+                        score += q_head[i] * k[i];
+                    att_head[t] = score / sqrtf(head_dim);
+                }
+
+                executeSoftmax(att_head, pos + 1);
+
+                float *xb_head = xb + h * head_dim;
+                memset(xb_head, 0, head_dim * sizeof(float));
+                for (int t = 0; t <= pos; t++) {
+                    const float *v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+                    for (int i = 0; i < head_dim; i++)
+                        xb_head[i] += att_head[t] * v[i];
+                }
+            }
+            return;
+        }
+
+        // Load attention Metal shader - try multiple paths
+        NSError* error = nil;
+        id<MTLLibrary> library = nil;
+
+        NSString* currentPath = [[NSFileManager defaultManager] currentDirectoryPath];
+        NSArray* possiblePaths = @[
+            [currentPath stringByAppendingPathComponent:@"build/scripts/Release/attention.metallib"],
+            @"/Volumes/SSD4tb/Dropbox/Publications/papers/m-os/build/scripts/Release/attention.metallib",
+            @"attention.metallib",
+            @"shaders/attention.metallib"
+        ];
+
+        for (NSString* path in possiblePaths) {
+            library = [(__bridge id<MTLDevice>)device newLibraryWithFile:path error:&error];
+            if (library) break;
+        }
+
+        if (!library) {
+            NSLog(@"Failed to load attention Metal library: %@", error);
+            // CPU fallback (same as above)
+            for (int h = 0; h < n_heads; h++) {
+                const float *q_head = q + h * head_dim;
+                float *att_head = att + h * seq_len;
+
+                for (int t = 0; t <= pos; t++) {
+                    const float *k = key_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+                    float score = 0;
+                    for (int i = 0; i < head_dim; i++)
+                        score += q_head[i] * k[i];
+                    att_head[t] = score / sqrtf(head_dim);
+                }
+
+                executeSoftmax(att_head, pos + 1);
+
+                float *xb_head = xb + h * head_dim;
+                memset(xb_head, 0, head_dim * sizeof(float));
+                for (int t = 0; t <= pos; t++) {
+                    const float *v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+                    for (int i = 0; i < head_dim; i++)
+                        xb_head[i] += att_head[t] * v[i];
+                }
+            }
+            return;
+        }
+
+        id<MTLFunction> function = [library newFunctionWithName:@"attention_kernel"];
+        id<MTLComputePipelineState> pipeline = [(__bridge id<MTLDevice>)device newComputePipelineStateWithFunction:function error:&error];
+
+        if (!pipeline) {
+            NSLog(@"Failed to create attention pipeline: %@", error);
+            // CPU fallback (same as above)
+            for (int h = 0; h < n_heads; h++) {
+                const float *q_head = q + h * head_dim;
+                float *att_head = att + h * seq_len;
+
+                for (int t = 0; t <= pos; t++) {
+                    const float *k = key_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+                    float score = 0;
+                    for (int i = 0; i < head_dim; i++)
+                        score += q_head[i] * k[i];
+                    att_head[t] = score / sqrtf(head_dim);
+                }
+
+                executeSoftmax(att_head, pos + 1);
+
+                float *xb_head = xb + h * head_dim;
+                memset(xb_head, 0, head_dim * sizeof(float));
+                for (int t = 0; t <= pos; t++) {
+                    const float *v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+                    for (int i = 0; i < head_dim; i++)
+                        xb_head[i] += att_head[t] * v[i];
+                }
+            }
+            return;
+        }
+
+
+        // Create Metal buffers
+        int total_q_size = n_heads * head_dim;
+        int total_att_size = n_heads * seq_len;
+        int total_xb_size = n_heads * head_dim;
+        size_t key_cache_size = seq_len * kv_dim; // Size per layer
+        size_t value_cache_size = seq_len * kv_dim; // Size per layer
+
+        id<MTLBuffer> qBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:q length:total_q_size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> attBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:att length:total_att_size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> xbBuffer = [(__bridge id<MTLDevice>)device newBufferWithLength:total_xb_size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> keyCacheBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:(key_cache + loff) length:key_cache_size*sizeof(float) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> valueCacheBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:(value_cache + loff) length:value_cache_size*sizeof(float) options:MTLResourceStorageModeShared];
+
+        uint uPos = (uint)pos, uHeadDim = (uint)head_dim, uNHeads = (uint)n_heads, uNKvHeads = (uint)n_kv_heads;
+        uint uSeqLen = (uint)seq_len, uKvDim = (uint)kv_dim, uKvMul = (uint)kv_mul;
+        id<MTLBuffer> posBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uPos length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> headDimBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uHeadDim length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> nHeadsBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uNHeads length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> nKvHeadsBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uNKvHeads length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> seqLenBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uSeqLen length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> kvDimBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uKvDim length:sizeof(uint) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> kvMulBuffer = [(__bridge id<MTLDevice>)device newBufferWithBytes:&uKvMul length:sizeof(uint) options:MTLResourceStorageModeShared];
+
+        // Execute Metal compute shader
+        id<MTLCommandBuffer> commandBuffer = [(__bridge id<MTLCommandQueue>)commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:qBuffer offset:0 atIndex:0];
+        [encoder setBuffer:attBuffer offset:0 atIndex:1];
+        [encoder setBuffer:xbBuffer offset:0 atIndex:2];
+        [encoder setBuffer:keyCacheBuffer offset:0 atIndex:3];
+        [encoder setBuffer:valueCacheBuffer offset:0 atIndex:4];
+        [encoder setBuffer:posBuffer offset:0 atIndex:5];
+        [encoder setBuffer:headDimBuffer offset:0 atIndex:6];
+        [encoder setBuffer:nHeadsBuffer offset:0 atIndex:7];
+        [encoder setBuffer:nKvHeadsBuffer offset:0 atIndex:8];
+        [encoder setBuffer:seqLenBuffer offset:0 atIndex:9];
+        [encoder setBuffer:kvDimBuffer offset:0 atIndex:10];
+        [encoder setBuffer:kvMulBuffer offset:0 atIndex:11];
+
+        MTLSize threadsPerThreadgroup = MTLSizeMake(16, 16, 1);
+        MTLSize threadgroups = MTLSizeMake((n_heads + 15) / 16, (head_dim + 15) / 16, 1);
+        [encoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+        [encoder endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+
+        // Copy results back
+        memcpy(xb, [xbBuffer contents], total_xb_size * sizeof(float));
+        memcpy(att, [attBuffer contents], total_att_size * sizeof(float));
+    }
+}

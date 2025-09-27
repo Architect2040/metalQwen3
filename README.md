@@ -840,5 +840,59 @@ Special thanks to:
 
 *Built with ❤️ for Apple Silicon and the open-source AI community*
 
+---
 
+## 📚 References & Further Reading
+
+### 🔧 **Metal & GPU Programming**
+- **[Apple Metal C++ API](https://developer.apple.com/metal/cpp/)** - Official Apple documentation for metal-cpp bindings, providing C++ wrappers for Metal API objects and methods. Essential for modern Metal development without Objective-C overhead.
+- **[GGML Metal Operations](https://github.com/ggml-org/llama.cpp/blob/b05a9d650f4da1e70e7e2cbe8fe44e61b39656db/ggml/src/ggml-metal/ggml-metal-ops.h#L56)** - Production-ready Metal compute shaders from llama.cpp implementing matrix operations, attention, and quantization. Reference implementation for optimized LLM inference on Apple Silicon.
+- **[Metal Puzzles](https://github.com/abeleinin/Metal-Puzzles/tree/main)** - Interactive educational exercises for learning Metal compute shaders through hands-on problems. Covers fundamental GPU programming concepts like parallel reductions, matrix operations, and memory optimization.
+- **[M1 GPU C++ Examples](https://github.com/larsgeb/m1-gpu-cpp)** - Practical examples demonstrating Apple Silicon GPU programming patterns, memory management, and performance optimization techniques using Metal from C++.
+- **[Metal Performance Testing](https://github.com/bkvogel/metal_performance_testing/tree/main/metal_performance_testing)** - Comprehensive GPU benchmarking framework for measuring Metal compute performance, memory bandwidth, and optimization validation on Apple hardware.
+- **[Metal Compute Shader Gist](https://gist.github.com/nullhook/11d74c02dc42e061ade9528973fae7f4)** - Concise code examples showing essential Metal compute shader patterns including threadgroup synchronization, memory coalescing, and kernel optimization techniques.
+
+### 🤖 **MLX & Apple ML Frameworks**
+- **[MLX Examples for Apple Silicon](https://github.com/ml-explore/mlx-examples/blob/main/wwdc25/Get_started_with_MLX_for_Apple_silicon.ipynb)** - Official Apple MLX framework tutorial from WWDC 2025, demonstrating unified memory usage, GPU acceleration, and modern ML workflows on Apple Silicon. Shows Apple's recommended approach to ML inference.
+- **[MLX-C CMake Configuration](https://github.com/ml-explore/mlx-c/blob/main/CMakeLists.txt)** - Production CMake build configuration for MLX C++ bindings, demonstrating best practices for Apple ML project structure, dependency management, and cross-platform compatibility.
+
+### 🚀 **Qwen3 Implementations & Variations**
+- **[qwen3.c (Original)](https://github.com/adriancable/qwen3.c)** - Adrian Cable's educational CPU implementation of Qwen3 transformer in pure C. Foundation for this project, featuring complete Q8_0 quantization, GQA attention, and qwen3.c binary format. Excellent learning resource for transformer internals.
+- **[qwen3.cu (CUDA)](https://github.com/gigit0000/qwen3.cu)** - NVIDIA GPU implementation using CUDA kernels for matrix operations and attention. Provides comparative reference for cross-platform GPU acceleration and demonstrates CUDA optimization techniques.
+- **[qwen3.c (Alternative)](https://github.com/gigit0000/qwen3.c)** - Alternative CPU implementation with different optimization approaches and code organization. Useful for comparing implementation strategies and performance characteristics.
+
+### 🛠️ **Development Tools**
+- **[Shader Transpiler](https://github.com/RavEngine/ShaderTranspiler)** - Cross-platform shader compilation framework supporting Metal, HLSL, GLSL, and SPIR-V. Enables sharing shader code across different GPU APIs and platforms, useful for multi-target GPU compute applications.
+
+### 📖 **Academic & Technical Papers**
+For comprehensive technical details on the Qwen3 architecture, including QK-Norm, Grouped Query Attention, and extended context capabilities, refer to the original Qwen3 research papers and technical documentation.
+
+---
+
+## 📖 Citation
+
+If you use MetalQwen3 in your research or projects, please cite this work:
+
+```bibtex
+@article{kashani2025metalqwen3,
+  title={MetalQwen3: High-Performance GPU-Accelerated Qwen3 Transformer Inference on Apple Silicon},
+  author={Kashani, Shlomo},
+  journal={arXiv preprint arXiv:XXXX.XXXX},
+  year={2025},
+  institution={Johns Hopkins University},
+  organization={QNeura.ai},
+  url={https://github.com/BoltzmannEntropy/metalQwen3},
+  note={Metal Performance Shaders implementation of Qwen3 transformer architecture with complete Apple Silicon GPU acceleration}
+}
+```
+
+**APA Format:**
+```
+Kashani, S. (2025). MetalQwen3: High-Performance GPU-Accelerated Qwen3 Transformer Inference on Apple Silicon. *arXiv preprint arXiv:XXXX.XXXX*. Johns Hopkins University, QNeura.ai. https://github.com/BoltzmannEntropy/metalQwen3
+```
+
+**IEEE Format:**
+```
+S. Kashani, "MetalQwen3: High-Performance GPU-Accelerated Qwen3 Transformer Inference on Apple Silicon," arXiv preprint arXiv:XXXX.XXXX, Johns Hopkins University, QNeura.ai, 2025. [Online]. Available: https://github.com/BoltzmannEntropy/metalQwen3
+```
 
