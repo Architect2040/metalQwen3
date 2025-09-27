@@ -1,8 +1,12 @@
-# metalQwen3 - Complete GPU-Accelerated Transformer with Apple Metal
 
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="metalQwen3 Logo" width="400"/>
+  <br>
 </div>
+
+### **🤖 Development with AI Coding Agents**
+
+**It's hard to imagine completing such a complex project without using coding agents such as Claude Code.** For evaluation, extensive testing framework development, and mostly automation - a project that could have taken 6 months to develop manually takes a month or two with AI assistance. **If you are not using Codex or Claude Code, you are definitely disadvantaged** in modern software development, especially for complex system programming tasks like GPU shader optimization and transformer inference engines.
 
 **: Full GPU Implementation Complete!** Metal GPU implementation of the Qwen3 transformer model on macOS with **complete Apple Silicon compute shader acceleration**. Built upon [Adrian Cable's qwen3.c](https://github.com/adriancable/qwen3.c) educational implementation, featuring complete Qwen3 architecture support including **QK-Norm**, **Grouped Query Attention**, **RoPE**, **Multi-Head Attention**, and **Q8_0 quantization**. Includes OpenAI-compatible API servers.
 
@@ -838,3 +842,4 @@ Special thanks to:
 
 
 *Built with ❤️ for Apple Silicon and the open-source AI community*
+
