@@ -223,66 +223,20 @@ void MetalContext::logError(const std::string& message) {
     std::cerr << "MetalContext Error: " << message << std::endl;
 }
 
-// CPU fallback implementations
-void MetalContext::cpuRMSNorm(float* output, const float* input, const float* weight, int size) {
-    float ss = 0;
-    for (int j = 0; j < size; j++)
-        ss += input[j] * input[j];
+// All operations now use Metal GPU shaders exclusively
 
-    ss = 1.0f / sqrtf((ss / size) + 1e-6f);
-
-    for (int j = 0; j < size; j++)
-        output[j] = weight[j] * (ss * input[j]);
-}
-
-void MetalContext::cpuSoftmax(float* x, int size) {
-    float max_val = 0;
-    for (int i = 0; i < size; i++)
-        if (x[i] > max_val)
-            max_val = x[i];
-
-    float sum = 0;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-
-    for (int i = 0; i < size; i++)
-        x[i] /= sum;
-}
-
-void MetalContext::cpuQuantizedMatMul(float* output, const int8_t* x_q, const float* x_s,
-                                     const int8_t* w_q, const float* w_s, int n, int d, int group_size) {
-    #pragma omp parallel for
-    for (int i = 0; i < d; i++) {
-        float val = 0;
-        int in = i * n;
-        for (int j = 0; j <= n - group_size; j += group_size) {
-            int32_t ival = 0;
-            for (int k = 0; k < group_size; k++)
-                ival += x_q[j + k] * w_q[in + j + k];
-            val += ((float) ival) * w_s[(in + j) / group_size] * x_s[j / group_size];
-        }
-        output[i] = val;
-    }
-}
-
-void MetalContext::cpuSwiGLU(float* hb, const float* hb2, int hidden_dim) {
-    for (int i = 0; i < hidden_dim; i++)
-        hb[i] *= hb2[i] * (1.0f / (1.0f + expf(-hb[i])));
-}
 
 // Metal shader execution implementations
 void MetalContext::executeRMSNorm(float* output, const float* input, const float* weight, int size) {
     if (!initialized) {
-        cpuRMSNorm(output, input, weight, size);
-        return;
+        std::cerr << "ERROR: Metal context not initialized!" << std::endl;
+        exit(1);
     }
 
     MTL::ComputePipelineState* pipeline = createComputePipeline("rmsnorm", "rmsnorm_kernel");
     if (!pipeline) {
-        cpuRMSNorm(output, input, weight, size);
-        return;
+        std::cerr << "FATAL ERROR: Failed to create Metal RMSNorm pipeline!" << std::endl;
+        exit(1);
     }
 
     // OPTIMIZATION: Use batched execution if available
@@ -346,15 +300,14 @@ void MetalContext::executeRMSNorm(float* output, const float* input, const float
 
 void MetalContext::executeSoftmax(float* x, int size) {
     if (!initialized) {
-        cpuSoftmax(x, size);
-        return;
+        std::cerr << "ERROR: Metal context not initialized!" << std::endl;
+        exit(1);
     }
 
     MTL::ComputePipelineState* pipeline = createComputePipeline("softmax", "softmax_kernel");
     if (!pipeline) {
-        std::cout << "Softmax: Using CPU fallback" << std::endl;
-        cpuSoftmax(x, size);
-        return;
+        std::cerr << "FATAL ERROR: Failed to create Metal softmax pipeline!" << std::endl;
+        exit(1);
     }
 
     // Create Metal buffers
@@ -394,15 +347,14 @@ void MetalContext::executeSoftmax(float* x, int size) {
 void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, const float* x_s,
                                          const int8_t* w_q, const float* w_s, int n, int d, int group_size) {
     if (!initialized) {
-        cpuQuantizedMatMul(output, x_q, x_s, w_q, w_s, n, d, group_size);
-        return;
+        std::cerr << "ERROR: Metal context not initialized!" << std::endl;
+        exit(1);
     }
 
     MTL::ComputePipelineState* pipeline = createComputePipeline("quantized_matmul", "quantized_matmul_kernel");
     if (!pipeline) {
-        std::cout << "QuantizedMatMul: Using CPU fallback" << std::endl;
-        cpuQuantizedMatMul(output, x_q, x_s, w_q, w_s, n, d, group_size);
-        return;
+        std::cerr << "FATAL ERROR: Failed to create Metal quantized matmul pipeline!" << std::endl;
+        exit(1);
     }
 
     // Create Metal buffers
@@ -459,15 +411,14 @@ void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, cons
 
 void MetalContext::executeSwiGLU(float* hb, const float* hb2, int hidden_dim) {
     if (!initialized) {
-        cpuSwiGLU(hb, hb2, hidden_dim);
-        return;
+        std::cerr << "ERROR: Metal context not initialized!" << std::endl;
+        exit(1);
     }
 
     MTL::ComputePipelineState* pipeline = createComputePipeline("swiglu", "swiglu_kernel");
     if (!pipeline) {
-        std::cout << "SwiGLU: Using CPU fallback" << std::endl;
-        cpuSwiGLU(hb, hb2, hidden_dim);
-        return;
+        std::cerr << "FATAL ERROR: Failed to create Metal SwiGLU pipeline!" << std::endl;
+        exit(1);
     }
 
     // Create Metal buffers
@@ -506,27 +457,23 @@ void MetalContext::executeSwiGLU(float* hb, const float* hb2, int hidden_dim) {
 void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_heads, int n_kv_heads,
                               const float* q_norm_weights, const float* k_norm_weights) {
     if (!initialized) {
-        // CPU fallback if Metal not available
-        cpuRoPE(q, k, head_dim, pos, n_heads, n_kv_heads, q_norm_weights, k_norm_weights);
-        return;
+        std::cerr << "ERROR: Metal context not initialized!" << std::endl;
+        exit(1);
     }
 
-    try {
-        // Load RoPE Metal shader
-        MTL::Library* library = loadLibrary("rope");
-        if (!library) {
-            std::cout << "RoPE: Metal library not found, using CPU fallback" << std::endl;
-            cpuRoPE(q, k, head_dim, pos, n_heads, n_kv_heads, q_norm_weights, k_norm_weights);
-            return;
-        }
+    // Load RoPE Metal shader - MUST succeed
+    MTL::Library* library = loadLibrary("rope");
+    if (!library) {
+        std::cerr << "FATAL ERROR: RoPE Metal library not found! Check shader compilation." << std::endl;
+        exit(1);
+    }
 
-        MTL::ComputePipelineState* pipeline = createComputePipeline("rope", "rope_kernel");
-        if (!pipeline) {
-            std::cout << "RoPE: Failed to create Metal pipeline, using CPU fallback" << std::endl;
-            library->release();
-            cpuRoPE(q, k, head_dim, pos, n_heads, n_kv_heads, q_norm_weights, k_norm_weights);
-            return;
-        }
+    MTL::ComputePipelineState* pipeline = createComputePipeline("rope", "rope_kernel");
+    if (!pipeline) {
+        std::cerr << "FATAL ERROR: Failed to create Metal RoPE pipeline!" << std::endl;
+        library->release();
+        exit(1);
+    }
 
         // Create Metal buffers
         size_t q_size = n_heads * head_dim * sizeof(float);
@@ -540,15 +487,14 @@ void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_
         MTL::Buffer* k_norm_buffer = createBuffer(k_norm_size, k_norm_weights);
 
         if (!q_buffer || !k_buffer || !q_norm_buffer || !k_norm_buffer) {
-            std::cout << "RoPE: Failed to create Metal buffers, using CPU fallback" << std::endl;
+            std::cerr << "FATAL ERROR: Failed to create Metal buffers for RoPE!" << std::endl;
             if (q_buffer) releaseBuffer(q_buffer);
             if (k_buffer) releaseBuffer(k_buffer);
             if (q_norm_buffer) releaseBuffer(q_norm_buffer);
             if (k_norm_buffer) releaseBuffer(k_norm_buffer);
             releaseComputePipeline(pipeline);
             library->release();
-            cpuRoPE(q, k, head_dim, pos, n_heads, n_kv_heads, q_norm_weights, k_norm_weights);
-            return;
+            exit(1);
         }
 
         // Execute Metal kernel for both Q and K heads
@@ -596,40 +542,28 @@ void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_
         library->release();
 
         std::cout << "RoPE: GPU execution successful" << std::endl;
-
-    } catch (const std::exception& e) {
-        std::cout << "RoPE: Metal execution failed (" << e.what() << "), using CPU fallback" << std::endl;
-        cpuRoPE(q, k, head_dim, pos, n_heads, n_kv_heads, q_norm_weights, k_norm_weights);
-    } catch (...) {
-        std::cout << "RoPE: Metal execution failed, using CPU fallback" << std::endl;
-        cpuRoPE(q, k, head_dim, pos, n_heads, n_kv_heads, q_norm_weights, k_norm_weights);
-    }
 }
 
 void MetalContext::executeAttention(float* xb, const float* q, float* att, float* key_cache, float* value_cache,
                                    int pos, int head_dim, int n_heads, int n_kv_heads, int seq_len, int kv_dim, uint64_t loff, int kv_mul) {
     if (!initialized) {
-        // CPU fallback if Metal not available
-        cpuAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
-        return;
+        std::cerr << "ERROR: Metal context not initialized!" << std::endl;
+        exit(1);
     }
 
-    try {
-        // Load attention Metal shader
-        MTL::Library* library = loadLibrary("attention");
-        if (!library) {
-            std::cout << "Attention: Metal library not found, using CPU fallback" << std::endl;
-            cpuAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
-            return;
-        }
+    // Load attention Metal shader - MUST succeed
+    MTL::Library* library = loadLibrary("attention");
+    if (!library) {
+        std::cerr << "FATAL ERROR: Attention Metal library not found! Check shader compilation." << std::endl;
+        exit(1);
+    }
 
-        MTL::ComputePipelineState* pipeline = createComputePipeline("attention", "attention_kernel");
-        if (!pipeline) {
-            std::cout << "Attention: Failed to create Metal pipeline, using CPU fallback" << std::endl;
-            library->release();
-            cpuAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
-            return;
-        }
+    MTL::ComputePipelineState* pipeline = createComputePipeline("attention", "attention_kernel");
+    if (!pipeline) {
+        std::cerr << "FATAL ERROR: Failed to create Metal attention pipeline!" << std::endl;
+        library->release();
+        exit(1);
+    }
 
         // Create Metal buffers
         size_t q_size = n_heads * head_dim * sizeof(float);
@@ -645,7 +579,7 @@ void MetalContext::executeAttention(float* xb, const float* q, float* att, float
         MTL::Buffer* value_cache_buffer = createBuffer(value_cache_size, value_cache + loff);
 
         if (!q_buffer || !att_buffer || !xb_buffer || !key_cache_buffer || !value_cache_buffer) {
-            std::cout << "Attention: Failed to create Metal buffers, using CPU fallback" << std::endl;
+            std::cerr << "FATAL ERROR: Failed to create Metal buffers for attention!" << std::endl;
             if (q_buffer) releaseBuffer(q_buffer);
             if (att_buffer) releaseBuffer(att_buffer);
             if (xb_buffer) releaseBuffer(xb_buffer);
@@ -653,8 +587,7 @@ void MetalContext::executeAttention(float* xb, const float* q, float* att, float
             if (value_cache_buffer) releaseBuffer(value_cache_buffer);
             releaseComputePipeline(pipeline);
             library->release();
-            cpuAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
-            return;
+            exit(1);
         }
 
         // Execute Metal kernel
@@ -708,14 +641,6 @@ void MetalContext::executeAttention(float* xb, const float* q, float* att, float
         library->release();
 
         std::cout << "Attention: GPU execution successful" << std::endl;
-
-    } catch (const std::exception& e) {
-        std::cout << "Attention: Metal execution failed (" << e.what() << "), using CPU fallback" << std::endl;
-        cpuAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
-    } catch (...) {
-        std::cout << "Attention: Metal execution failed, using CPU fallback" << std::endl;
-        cpuAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
-    }
 }
 
 // OPTIMIZATION: Batching methods for dramatically improved performance
@@ -833,84 +758,4 @@ void MetalContext::internalExecuteRMSNorm(MTL::ComputeCommandEncoder* encoder, M
     returnBufferToPool(epsBuffer, sizeof(float));
 }
 
-// CPU fallback implementations
-void MetalContext::cpuAttention(float* xb, const float* q, float* att, float* key_cache, float* value_cache,
-                               int pos, int head_dim, int n_heads, int n_kv_heads, int seq_len, int kv_dim, uint64_t loff, int kv_mul) {
-    // CPU fallback - multihead attention. iterate over all heads
-    #pragma omp parallel for
-    for (int h = 0; h < n_heads; h++) {
-        // get the query vector for this head
-        const float *q_head = q + h * head_dim;
-        // attention scores for this head
-        float *att_head = att + h * seq_len;
-        // iterate over all timesteps, including the current one
-        for (int t = 0; t <= pos; t++) {
-            // get the key vector for this head and at this timestep
-            const float *k = key_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
-            // calculate the attention score as the dot product of q and k
-            float score = 0;
-            for (int i = 0; i < head_dim; i++)
-                score += q_head[i] * k[i];
-
-            // save the score to the attention buffer
-            att_head[t] = score / sqrtf(head_dim);
-        }
-
-        // softmax the scores to get attention weights, from 0..pos inclusively
-        executeSoftmax(att_head, pos + 1);
-
-        // weighted sum of the values, store back into xb
-        float *xb_head = xb + h * head_dim;
-        memset(xb_head, 0, head_dim * sizeof(float));
-        for (int t = 0; t <= pos; t++) {
-            // get the value vector for this head and at this timestep
-            const float *v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
-            // get the attention weight for this timestep, then accumulate the weighted value into xb
-            for (int i = 0; i < head_dim; i++)
-                xb_head[i] += att_head[t] * v[i];
-        }
-    }
-}
-
-void MetalContext::cpuRoPE(float* q, float* k, int head_dim, int pos, int n_heads, int n_kv_heads,
-                          const float* q_norm_weights, const float* k_norm_weights) {
-    // CPU implementation with RMSNorm + RoPE
-    for (int h = 0; h < n_heads; h++) {
-        float *q_head = q + h * head_dim;
-
-        // RMS norm for Q
-        executeRMSNorm(q_head, q_head, q_norm_weights, head_dim);
-
-        // RoPE for Q
-        for (int j = 0; j < head_dim/2; j++) {
-            float freq = powf(1e6, -(float)j / (head_dim/2));
-            float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
-
-            float x = q_head[j];
-            float y = q_head[j + head_dim/2];
-
-            q_head[j] = x * cos_freq - y * sin_freq;
-            q_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
-        }
-    }
-
-    // K-RMSNorm + rotate each key head
-    for (int h = 0; h < n_kv_heads; h++) {
-        float *k_head = k + h * head_dim;
-
-        // RMS norm for K
-        executeRMSNorm(k_head, k_head, k_norm_weights, head_dim);
-
-        // RoPE for K
-        for (int j = 0; j < head_dim/2; j++) {
-            float freq = powf(1e6, -(float)j / (head_dim/2));
-            float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
-
-            float x = k_head[j];
-            float y = k_head[j + head_dim/2];
-
-            k_head[j] = x * cos_freq - y * sin_freq;
-            k_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
-        }
-    }
-}
+// All operations now use Metal GPU shaders exclusively - NO CPU FALLBACKS!

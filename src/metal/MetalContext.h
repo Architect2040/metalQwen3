@@ -115,14 +115,5 @@ private:
     void internalExecuteRMSNorm(MTL::ComputeCommandEncoder* encoder, MTL::Buffer* output, MTL::Buffer* input, MTL::Buffer* weight, int size);
     void internalExecuteQuantizedMatMul(MTL::ComputeCommandEncoder* encoder, MTL::Buffer* output, MTL::Buffer* x_buffer, MTL::Buffer* w_buffer, MTL::Buffer* x_scales, MTL::Buffer* w_scales, int n, int d, int group_size);
 
-    // CPU fallback implementations
-    void cpuRMSNorm(float* output, const float* input, const float* weight, int size);
-    void cpuSoftmax(float* x, int size);
-    void cpuQuantizedMatMul(float* output, const int8_t* x_q, const float* x_s,
-                           const int8_t* w_q, const float* w_s, int n, int d, int group_size);
-    void cpuSwiGLU(float* hb, const float* hb2, int hidden_dim);
-    void cpuAttention(float* xb, const float* q, float* att, float* key_cache, float* value_cache,
-                     int pos, int head_dim, int n_heads, int n_kv_heads, int seq_len, int kv_dim, uint64_t loff, int kv_mul);
-    void cpuRoPE(float* q, float* k, int head_dim, int pos, int n_heads, int n_kv_heads,
-                const float* q_norm_weights, const float* k_norm_weights);
+    // All operations use Metal GPU shaders exclusively
 };
