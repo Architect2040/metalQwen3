@@ -4,7 +4,7 @@
   <br>
 </div>
 
-**Full GPU Implementation Complete!** Metal GPU implementation of the Qwen3 transformer model on macOS with **complete Apple Silicon compute shader acceleration**. 
+**Metal GPU implementation of the Qwen3** transformer model on macOS with **Apple Silicon compute shader acceleration**. 
 
 Built upon [Adrian Cable's qwen3.c](https://github.com/adriancable/qwen3.c) educational implementation, featuring complete Qwen3 architecture support including **QK-Norm**, **Grouped Query Attention**, **RoPE**, **Multi-Head Attention**, and **Q8_0 quantization**. Includes OpenAI-compatible API servers.
 
@@ -895,4 +895,5 @@ Kashani, S. (2025). MetalQwen3: High-Performance GPU-Accelerated Qwen3 Transform
 ```
 S. Kashani, "MetalQwen3: High-Performance GPU-Accelerated Qwen3 Transformer Inference on Apple Silicon," arXiv preprint arXiv:XXXX.XXXX, Johns Hopkins University, QNeura.ai, 2025. [Online]. Available: https://github.com/BoltzmannEntropy/metalQwen3
 ```
+
 
