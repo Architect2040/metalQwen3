@@ -44,3 +44,5 @@ ieee
 build
 .claude 
 libs 
+.aider*
+paper

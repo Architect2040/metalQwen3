@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <cmath>
 #include <cstring>
+#include <sys/sysctl.h>
 
 MetalContext::MetalContext() : initialized(false), device(nullptr), commandQueue(nullptr),
                                  batchCommandBuffer(nullptr), batchEncoder(nullptr) {
@@ -32,10 +33,52 @@ MetalContext::~MetalContext() {
 }
 
 bool MetalContext::initialize() {
+    // Print system diagnostics
+    std::cout << "\n=== System Diagnostics ===" << std::endl;
+
+    // Get CPU architecture
+    #if defined(__arm64__) || defined(__aarch64__)
+        std::cout << "CPU Architecture: Apple Silicon (ARM64)" << std::endl;
+    #elif defined(__x86_64__)
+        std::cout << "CPU Architecture: Intel (x86_64)" << std::endl;
+    #else
+        std::cout << "CPU Architecture: Unknown" << std::endl;
+    #endif
+
+    // Get chip model using sysctl
+    char chip_model[256];
+    size_t chip_size = sizeof(chip_model);
+    if (sysctlbyname("machdep.cpu.brand_string", &chip_model, &chip_size, NULL, 0) == 0) {
+        std::cout << "CPU Model: " << chip_model << std::endl;
+    }
+
+    // Get memory size
+    uint64_t memsize;
+    size_t len = sizeof(memsize);
+    if (sysctlbyname("hw.memsize", &memsize, &len, NULL, 0) == 0) {
+        std::cout << "Total Memory: " << (memsize / (1024*1024*1024)) << " GB" << std::endl;
+    }
+
+    // Get macOS version
+    char os_version[256];
+    size_t os_size = sizeof(os_version);
+    if (sysctlbyname("kern.osproductversion", &os_version, &os_size, NULL, 0) == 0) {
+        std::cout << "macOS Version: " << os_version << std::endl;
+    }
+
+    std::cout << "=========================\n" << std::endl;
+
     // Get the default Metal device
     device = MTL::CreateSystemDefaultDevice();
     if (!device) {
         logError("Failed to create Metal device");
+        std::cerr << "\nPossible reasons:" << std::endl;
+        std::cerr << "  1. Running on a Mac without Metal support (pre-2012 hardware)" << std::endl;
+        std::cerr << "  2. Running in a virtual machine or Docker container" << std::endl;
+        std::cerr << "  3. Metal drivers not installed or corrupted" << std::endl;
+        std::cerr << "  4. macOS version too old (requires 10.11+ for Metal)" << std::endl;
+        std::cerr << "\nNote: This software requires Apple Silicon (M1/M2/M3/M4) or" << std::endl;
+        std::cerr << "      Intel Mac with Metal support for GPU acceleration." << std::endl;
         return false;
     }
 
@@ -48,8 +91,12 @@ bool MetalContext::initialize() {
 
     initialized = true;
 
-    std::cout << "Metal Context initialized successfully" << std::endl;
-    std::cout << "Device: " << device->name()->utf8String() << std::endl;
+    std::cout << "\n=== Metal Device Info ===" << std::endl;
+    std::cout << "Device Name: " << device->name()->utf8String() << std::endl;
+    std::cout << "Max Threads Per Threadgroup: " << device->maxThreadsPerThreadgroup().width << std::endl;
+    std::cout << "Recommended Working Set Size: " << (device->recommendedMaxWorkingSetSize() / (1024*1024*1024)) << " GB" << std::endl;
+    std::cout << "Metal Context initialized successfully!" << std::endl;
+    std::cout << "=========================\n" << std::endl;
 
     return true;
 }
