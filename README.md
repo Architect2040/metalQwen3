@@ -88,18 +88,109 @@ cmake -DCMAKE_BUILD_TYPE=Release -G "Xcode" . -B build
 cmake --build build --config Release
 ```
 
+**Successful Build Output:**
+
+```
+** BUILD SUCCEEDED **
+
+✅ Build completed successfully!
+📂 Executables built in build/scripts/Release/ directory
+   📄 build/scripts/Release/TestQwen3Benchmark
+   📄 build/scripts/Release/Qwen3ApiServer
+   📄 Metal libraries: build/scripts/Release/*.metallib
+
+🎉 Metal Qwen3 Build Complete!
+
+📋 Usage Instructions (UPDATED):
+
+1. Download a model (if needed):
+   python3 scripts/download_qwen3_4b.py --output-dir models
+
+2. Run benchmark tool:
+   ./build/scripts/Release/TestQwen3Benchmark models/qwen3-4B.bin
+
+3. Start optimized API server:
+   ./build/scripts/Release/Qwen3ApiServer models/qwen3-4B.bin --port 8080
+
+4. Test actual responses:
+   python3 scripts/actual_response_test.py
+
+5. Get performance report:
+   python3 scripts/final_performance_report.py
+
+6. Run comprehensive benchmarks:
+   python3 scripts/comprehensive_benchmark.py
+```
+
 ### 📥 Download and Convert Models
 
 **Step 1: Download Qwen3-4B from HuggingFace**
 ```bash
 # Download and convert Qwen3-4B model (recommended)
 python3 scripts/download_qwen3_4b.py --output-dir models
-
-# This will create:
-# - models/qwen3-4B.bin (4.27 GB - main model)
-# - models/qwen3-4B.bin.tokenizer (tokenizer)
-# - models/qwen3-4B.bin.template* (prompt templates)
 ```
+
+**Expected Output:**
+
+```
+🚀 Qwen3-4B Model Downloader
+==================================================
+Model: https://huggingface.co/Qwen/Qwen3-4B
+Output directory: models
+Force redownload: False
+
+Downloading Qwen/Qwen3-4B...
+Step 1: Downloading model files...
+README.md: 16.9kB [00:00, 7.85MB/s]
+.gitattributes: 1.57kB [00:00, 6.51MB/s]
+LICENSE: 11.3kB [00:00, 36.7MB/s]
+Fetching 12 files: 100%|████████████████████████████████| 12/12 [00:00<00:00, 25.04it/s]
+Model downloaded to: ~/.cache/huggingface/hub/models--Qwen--Qwen3-4B/snapshots/...
+
+Step 2: Loading model and tokenizer...
+Loading checkpoint shards: 100%|█████████████████████████| 3/3 [00:19<00:00,  6.65s/it]
+Model config:
+  - Hidden size: 2560
+  - Num layers: 36
+  - Num heads: 32
+  - Vocab size: 151936
+
+Step 3: Converting to qwen3.c format...
+Loading checkpoint shards: 100%|█████████████████████████| 3/3 [00:21<00:00,  7.33s/it]
+ModelArgs(dim=2560, n_layers=36, n_heads=32, n_kv_heads=8, head_dim=128,
+          vocab_size=151936, hidden_dim=9728, max_seq_len=40960)
+
+Step 4: Exporting quantized model...
+1/253 quantized (151936, 2560) to Q8_0 with max error 0.00096118
+2/253 quantized (4096, 2560) to Q8_0 with max error 0.00232030
+...
+253/253 quantized - Complete!
+
+Written model checkpoint to models/qwen3-4B.bin
+Step 5: Creating tokenizer files...
+Written tokenizer model to models/qwen3-4B.bin.tokenizer
+Written prompt templates to models/qwen3-4B.bin.template.*
+Step 6: Verifying conversion...
+✅ Magic number: 0x616A6331
+✅ Version: 1
+✅ Model successfully converted to models/qwen3-4B.bin
+   File size: 4,274,448,640 bytes
+
+Created files:
+  - models/qwen3-4B.bin (4,274,448,640 bytes)
+  - models/qwen3-4B.bin.tokenizer (2,189,673 bytes)
+  - models/qwen3-4B.bin.template (71 bytes)
+  - models/qwen3-4B.bin.template.with-thinking (52 bytes)
+  - models/qwen3-4B.bin.template.with-system (103 bytes)
+  - models/qwen3-4B.bin.template.with-system-and-thinking (84 bytes)
+```
+
+**This process will:**
+- Download model from HuggingFace (auto-cached in `~/.cache/huggingface/`)
+- Convert from PyTorch format to qwen3.c binary format
+- Apply Q8_0 INT8 quantization (4x compression)
+- Create tokenizer and template files
+- Take ~2-5 minutes depending on internet speed
 
 **Step 2: Verify Model Download**
 ```bash
@@ -113,18 +204,75 @@ hexdump -C models/qwen3-4B.bin | head -2
 
 **Start the Optimized Metal GPU Server:**
 ```bash
-./scripts/Qwen3ApiServer models/qwen3-4B.bin --port 8080
-
-# You should see:
-# ✓ Metal Context initialized successfully
-# ✓ Device: Apple M1 Max (or your device)
-# ✓ MetalQwen3 loaded model (vocab=151936, dim=2560, seq_len=40960)
-# ✅ Found Metal library: rmsnorm.metallib
-# ✅ RMSNorm: GPU execution successful
-# ✅ Found Metal library: quantized_matmul.metallib
-# ✅ QuantizedMatMul: GPU execution successful
-# ✅ Ready for OpenAI-compatible requests!
+./build/scripts/Release/Qwen3ApiServer models/qwen3-4B.bin --port 8080
 ```
+
+**Expected Output (Successful Metal Initialization):**
+
+```
+=== Qwen3 Metal API Server ===
+Model: models/qwen3-4B.bin
+Host: localhost
+Port: 8080
+Threads: 8
+
+🔧 Initializing Metal context...
+
+=== System Diagnostics ===
+CPU Architecture: Apple Silicon (ARM64)
+CPU Model: Apple M1 Max
+Total Memory: 32 GB
+macOS Version: 15.5
+=========================
+
+=== Metal Device Info ===
+Device Name: Apple M1 Max
+Max Threads Per Threadgroup: 1024
+Recommended Working Set Size: 21 GB
+Metal Context initialized successfully!
+=========================
+
+📦 Loading Qwen3 model...
+Initialized basic tokenizer with 196 tokens
+Initializing Qwen3 API handler...
+Using built-in simple tokenizer for demonstration
+
+=== System Diagnostics ===
+CPU Architecture: Apple Silicon (ARM64)
+CPU Model: Apple M1 Max
+Total Memory: 32 GB
+macOS Version: 15.5
+=========================
+
+=== Metal Device Info ===
+Device Name: Apple M1 Max
+Max Threads Per Threadgroup: 1024
+Recommended Working Set Size: 21 GB
+Metal Context initialized successfully!
+=========================
+
+MetalQwen3 loaded model models/qwen3-4B.bin (vocab=151936, dim=2560, seq_len=4096)
+✓ Qwen3 API handler initialized successfully
+  Model path: models/qwen3-4B.bin
+  Vocabulary size: 151936
+  Model dimension: 2560
+  Sequence length: 40960
+  Metal backend ready: yes
+🚀 Starting server...
+🌐 API available at: http://localhost:8080
+📚 Documentation: http://localhost:8080/
+❤️  Health check: http://localhost:8080/health
+
+✅ Ready for OpenAI-compatible requests!
+Press Ctrl+C to stop the server.
+```
+
+**If you see "Failed to create Metal device" error:**
+The diagnostics will show possible reasons:
+- Running on non-Apple Silicon hardware
+- Running in a virtual machine or Docker container
+- Corrupted Metal drivers
+- macOS version too old (requires 10.11+)
 
 ### 🧪 Test the API
 
