@@ -140,6 +140,10 @@ private:
     // Metal implementation of forward pass - using original layer loop but Metal shaders
     float* metal_forward(int token, int pos);
 
+    // Gracefully handle GPU failures by disabling Metal backend and falling back to CPU
+    void disableMetalBackend(const char* operation, const char* reason);
+    void disableMetalBackend(const char* operation, const std::exception& e);
+
     // Metal shader calls for hotspots
     void metal_rmsnorm(float *o, float *x, float *weight, int size);
     void metal_softmax(float *x, int size);

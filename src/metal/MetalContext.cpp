@@ -32,6 +32,8 @@
 #include <vector>
 #include <string>
 #include <cerrno>
+#include <sstream>
+#include <stdexcept>
 
 // Print stack trace
 static void printStackTrace() {
@@ -418,13 +420,24 @@ void MetalContext::cleanup() {
 }
 
 MTL::Buffer* MetalContext::createBuffer(size_t size, const void* data) {
-    if (!initialized) return nullptr;
+    if (!initialized) {
+        return nullptr;
+    }
+
+    // Always allocate a new shared buffer and copy the contents manually so we can
+    // detect allocation failures and avoid Objective-C exceptions thrown by Metal.
+    MTL::Buffer* buffer = device->newBuffer(size, MTL::ResourceStorageModeShared);
+    if (!buffer) {
+        std::ostringstream oss;
+        oss << "Failed to allocate Metal buffer (size=" << size << " bytes)";
+        throw std::runtime_error(oss.str());
+    }
 
     if (data) {
-        return device->newBuffer(data, size, MTL::ResourceStorageModeShared);
-    } else {
-        return device->newBuffer(size, MTL::ResourceStorageModeShared);
+        std::memcpy(buffer->contents(), data, size);
     }
+
+    return buffer;
 }
 
 void MetalContext::releaseBuffer(MTL::Buffer* buffer) {
@@ -709,13 +722,33 @@ void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, cons
     encoder->setBuffer(kBuffer, 0, 7);
     encoder->setBuffer(groupSizeBuffer, 0, 8);
 
-    MTL::Size threadsPerThreadgroup = MTL::Size::Make(16, 16, 1);
-    MTL::Size threadgroups = MTL::Size::Make((d + 15) / 16, 1, 1);
+    // Use 1D dispatch matching the kernel's thread_position_in_grid
+    MTL::Size threadsPerThreadgroup = MTL::Size::Make(256, 1, 1);
+    MTL::Size threadgroups = MTL::Size::Make((d + 255) / 256, 1, 1);
     encoder->dispatchThreadgroups(threadgroups, threadsPerThreadgroup);
     encoder->endEncoding();
 
     commitCommandBuffer(commandBuffer);
     waitForCompletion(commandBuffer);
+
+    // Check for errors
+    if (commandBuffer->status() == MTL::CommandBufferStatusError) {
+        NS::Error* error = commandBuffer->error();
+        std::string errorMsg = error ? error->localizedDescription()->utf8String() : "Unknown error";
+
+        // Cleanup before throwing
+        releaseBuffer(xBuffer);
+        releaseBuffer(wBuffer);
+        releaseBuffer(xScalesBuffer);
+        releaseBuffer(wScalesBuffer);
+        releaseBuffer(outputBuffer);
+        releaseBuffer(mBuffer);
+        releaseBuffer(nBuffer);
+        releaseBuffer(kBuffer);
+        releaseBuffer(groupSizeBuffer);
+
+        throw std::runtime_error("Metal QuantizedMatMul command buffer failed: " + errorMsg);
+    }
 
     // Copy result back
     memcpy(output, outputBuffer->contents(), d * sizeof(float));

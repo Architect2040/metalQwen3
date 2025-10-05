@@ -6,8 +6,62 @@
 #include <thread>
 #include <chrono>
 #include <algorithm>
+#include <execinfo.h>
+#include <cxxabi.h>
 
 using json = nlohmann::json;
+
+// Print stack trace for debugging
+static void printStackTrace(const std::string& context) {
+    const int max_frames = 128;
+    void* frame_addresses[max_frames];
+
+    int num_frames = backtrace(frame_addresses, max_frames);
+    char** symbols = backtrace_symbols(frame_addresses, num_frames);
+
+    std::cerr << "\n=== STACK TRACE (" << context << ") ===" << std::endl;
+    for (int i = 0; i < num_frames; i++) {
+        // Try to demangle C++ symbols
+        char* mangled_name = nullptr;
+        char* offset = nullptr;
+        char* end_offset = nullptr;
+
+        // Parse the symbol string
+        for (char* p = symbols[i]; *p; ++p) {
+            if (*p == '(') {
+                mangled_name = p;
+            } else if (*p == '+') {
+                offset = p;
+            } else if (*p == ')') {
+                end_offset = p;
+                break;
+            }
+        }
+
+        if (mangled_name && offset && end_offset && mangled_name < offset) {
+            *mangled_name++ = '\0';
+            *offset++ = '\0';
+            *end_offset = '\0';
+
+            int status;
+            char* real_name = abi::__cxa_demangle(mangled_name, nullptr, nullptr, &status);
+
+            if (status == 0) {
+                std::cerr << "  [" << i << "] " << symbols[i] << " : "
+                          << real_name << " + " << offset << std::endl;
+                free(real_name);
+            } else {
+                std::cerr << "  [" << i << "] " << symbols[i] << " : "
+                          << mangled_name << " + " << offset << std::endl;
+            }
+        } else {
+            std::cerr << "  [" << i << "] " << symbols[i] << std::endl;
+        }
+    }
+    std::cerr << "=== END STACK TRACE ===\n" << std::endl;
+
+    free(symbols);
+}
 
 Qwen3ApiHandler::Qwen3ApiHandler(MetalContext& context)
     : metalContext(context) {
@@ -53,12 +107,28 @@ bool Qwen3ApiHandler::initialize(const std::string& model_path) {
 
 void Qwen3ApiHandler::handleChatCompletions(const httplib::Request& req, httplib::Response& res) {
     try {
+        std::cout << "\n📨 Received chat completion request" << std::endl;
+        std::cout << "   Content-Type: " << req.get_header_value("Content-Type") << std::endl;
+        std::cout << "   Body length: " << req.body.size() << " bytes" << std::endl;
+
         start_time = std::chrono::high_resolution_clock::now();
         first_token_recorded = false;
 
         // Parse request
-        json request_json = json::parse(req.body);
+        std::cout << "   Parsing JSON request..." << std::endl;
+        json request_json;
+        try {
+            request_json = json::parse(req.body);
+            std::cout << "   ✓ JSON parsed successfully" << std::endl;
+        } catch (const json::parse_error& e) {
+            std::cerr << "   ✗ JSON parse error: " << e.what() << std::endl;
+            std::cerr << "   Request body: " << req.body << std::endl;
+            throw;
+        }
+
+        std::cout << "   Parsing completion request..." << std::endl;
         CompletionRequest completion_req = parseCompletionRequest(request_json);
+        std::cout << "   ✓ Completion request parsed" << std::endl;
         const std::string default_model = metalReady ? "qwen3-metal" : "qwen3-metal-cpu";
         if (completion_req.model.empty()) {
             completion_req.model = default_model;
@@ -74,16 +144,21 @@ void Qwen3ApiHandler::handleChatCompletions(const httplib::Request& req, httplib
 
         if (completion_req.stream) {
             // Streaming response
+            std::cout << "   Using streaming mode" << std::endl;
             res.set_header("Content-Type", "text/event-stream");
             res.set_header("Cache-Control", "no-cache");
             res.set_header("Connection", "keep-alive");
             streamCompletion(completion_req, res);
         } else {
             // Non-streaming response
+            std::cout << "   Using non-streaming mode" << std::endl;
+            std::cout << "   Generating completion..." << std::endl;
             int prompt_tokens = 0;
             int completion_tokens = 0;
             std::string generated = generateCompletion(completion_req, prompt_tokens, completion_tokens);
+            std::cout << "   ✓ Generation complete: " << completion_tokens << " tokens" << std::endl;
 
+            std::cout << "   Creating response..." << std::endl;
             json response = createCompletionResponse(
                 generateRequestId(),
                 completion_req.model,
@@ -92,16 +167,114 @@ void Qwen3ApiHandler::handleChatCompletions(const httplib::Request& req, httplib
                 completion_tokens
             );
 
+            std::cout << "   ✓ Sending response" << std::endl;
             res.set_content(response.dump(), "application/json");
         }
 
-    } catch (const std::exception& e) {
-        std::cerr << "Error in chat completions: " << e.what() << std::endl;
+        std::cout << "   ✅ Request completed successfully\n" << std::endl;
+
+    } catch (const json::exception& e) {
+        std::cerr << "\n" << std::string(60, '=') << std::endl;
+        std::cerr << "❌ JSON EXCEPTION in handleChatCompletions" << std::endl;
+        std::cerr << std::string(60, '=') << std::endl;
+        std::cerr << "   Exception type: " << typeid(e).name() << std::endl;
+        std::cerr << "   Message: " << e.what() << std::endl;
+        std::cerr << "   Error ID: " << e.id << std::endl;
+        printStackTrace("JSON Exception");
 
         json error_response = {
             {"error", {
-                {"message", e.what()},
+                {"message", std::string("JSON error: ") + e.what()},
+                {"type", "json_error"},
+                {"code", "invalid_json"}
+            }}
+        };
+
+        res.status = 400;
+        res.set_content(error_response.dump(), "application/json");
+
+    } catch (const std::runtime_error& e) {
+        std::cerr << "\n" << std::string(60, '=') << std::endl;
+        std::cerr << "❌ RUNTIME_ERROR EXCEPTION in handleChatCompletions" << std::endl;
+        std::cerr << std::string(60, '=') << std::endl;
+        std::cerr << "   Exception type: " << typeid(e).name() << std::endl;
+        std::cerr << "   Message: " << e.what() << std::endl;
+        printStackTrace("Runtime Error");
+
+        json error_response = {
+            {"error", {
+                {"message", std::string("Runtime error: ") + e.what()},
+                {"type", "runtime_error"},
+                {"code", "internal_error"}
+            }}
+        };
+
+        res.status = 500;
+        res.set_content(error_response.dump(), "application/json");
+
+    } catch (const std::exception& e) {
+        std::cerr << "\n" << std::string(60, '=') << std::endl;
+        std::cerr << "❌ STD::EXCEPTION in handleChatCompletions" << std::endl;
+        std::cerr << std::string(60, '=') << std::endl;
+        std::cerr << "   Exception type: " << typeid(e).name() << std::endl;
+        std::cerr << "   Demangled type: ";
+        int status;
+        char* demangled = abi::__cxa_demangle(typeid(e).name(), nullptr, nullptr, &status);
+        if (status == 0) {
+            std::cerr << demangled << std::endl;
+            free(demangled);
+        } else {
+            std::cerr << typeid(e).name() << std::endl;
+        }
+        std::cerr << "   Message: " << e.what() << std::endl;
+        printStackTrace("std::exception");
+
+        json error_response = {
+            {"error", {
+                {"message", std::string("Error: ") + e.what()},
                 {"type", "internal_error"},
+                {"code", "internal_error"}
+            }}
+        };
+
+        res.status = 500;
+        res.set_content(error_response.dump(), "application/json");
+
+    } catch (...) {
+        std::cerr << "\n" << std::string(60, '=') << std::endl;
+        std::cerr << "❌ UNKNOWN EXCEPTION TYPE in handleChatCompletions" << std::endl;
+        std::cerr << std::string(60, '=') << std::endl;
+        std::cerr << "   This is NOT a std::exception" << std::endl;
+        std::cerr << "   Possibly:" << std::endl;
+        std::cerr << "     - Objective-C NSException" << std::endl;
+        std::cerr << "     - C++ exception not derived from std::exception" << std::endl;
+        std::cerr << "     - Signal/segfault caught as exception" << std::endl;
+
+        // Try to get current exception info
+        try {
+            auto p = std::current_exception();
+            if (p) {
+                std::cerr << "   std::current_exception() is NOT null" << std::endl;
+                try {
+                    std::rethrow_exception(p);
+                } catch (const std::exception& e) {
+                    std::cerr << "   Re-caught as std::exception: " << e.what() << std::endl;
+                } catch (...) {
+                    std::cerr << "   Cannot rethrow as std::exception" << std::endl;
+                }
+            } else {
+                std::cerr << "   std::current_exception() is null" << std::endl;
+            }
+        } catch (...) {
+            std::cerr << "   Error examining exception" << std::endl;
+        }
+
+        printStackTrace("Unknown Exception");
+
+        json error_response = {
+            {"error", {
+                {"message", "Unknown exception type (not std::exception) - check server logs for stack trace"},
+                {"type", "unknown_error"},
                 {"code", "internal_error"}
             }}
         };

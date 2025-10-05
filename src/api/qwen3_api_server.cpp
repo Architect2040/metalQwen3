@@ -170,15 +170,36 @@ int main(int argc, char* argv[]) {
             res.set_content(html.str(), "text/html");
         });
 
-        // Error handler
-        server.set_error_handler([](const httplib::Request&, httplib::Response& res) {
-            std::ostringstream error_html;
-            error_html << "<html><body>";
-            error_html << "<h1>Error " << res.status << "</h1>";
-            error_html << "<p>The requested resource was not found.</p>";
-            error_html << "<p><a href=\"/\">Back to main page</a></p>";
-            error_html << "</body></html>";
-            res.set_content(error_html.str(), "text/html");
+        // Error handler - only for actual 404s, don't override API errors
+        server.set_error_handler([](const httplib::Request& req, httplib::Response& res) {
+            // If the response already has content (from API handler), don't override it
+            if (!res.body.empty()) {
+                return;
+            }
+
+            // Only provide HTML error page for actual 404s and browser requests
+            if (res.status == 404) {
+                std::ostringstream error_html;
+                error_html << "<html><body>";
+                error_html << "<h1>Error 404 - Not Found</h1>";
+                error_html << "<p>The requested resource was not found.</p>";
+                error_html << "<p>Requested path: " << req.path << "</p>";
+                error_html << "<p><a href=\"/\">Back to main page</a></p>";
+                error_html << "</body></html>";
+                res.set_content(error_html.str(), "text/html");
+            } else {
+                // For other errors, provide a JSON response for API clients
+                std::ostringstream error_json;
+                error_json << "{"
+                          << "\"error\": {"
+                          << "\"message\": \"HTTP " << res.status << " error\","
+                          << "\"type\": \"http_error\","
+                          << "\"code\": " << res.status << ","
+                          << "\"path\": \"" << req.path << "\""
+                          << "}"
+                          << "}";
+                res.set_content(error_json.str(), "application/json");
+            }
         });
 
         // Start server

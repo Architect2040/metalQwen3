@@ -39,6 +39,32 @@ MetalQwen3::~MetalQwen3() {
     cleanup();
 }
 
+void MetalQwen3::disableMetalBackend(const char* operation, const std::exception& e) {
+    disableMetalBackend(operation, e.what());
+}
+
+void MetalQwen3::disableMetalBackend(const char* operation, const char* reason) {
+    std::cerr << "MetalQwen3: Metal " << (operation ? operation : "operation")
+              << " failed";
+    if (reason && reason[0] != '\0') {
+        std::cerr << " (" << reason << ")";
+    }
+    std::cerr << ". Falling back to CPU backend." << std::endl;
+
+    if (metalContext) {
+        try {
+            if (metalContext->isBatching()) {
+                metalContext->endBatch();
+            }
+        } catch (...) {
+            // Ignore cleanup errors while shutting down Metal
+        }
+        metalContext.reset();
+    }
+
+    gpuMemoryUsed = 0;
+}
+
 bool MetalQwen3::initialize() {
     if (metalContext && !metalContext->isInitialized()) {
         if (!metalContext->initialize()) {
@@ -463,71 +489,99 @@ void MetalQwen3::free_transformer_weights(MetalTransformerWeights *w) {
 // Metal shader implementations for hotspots
 void MetalQwen3::metal_rmsnorm(float *o, float *x, float *weight, int size) {
     if (metalContext) {
-        metalContext->executeRMSNorm(o, x, weight, size);
-    } else {
-        // CPU fallback
-        float ss = 0;
-        for (int j = 0; j < size; j++)
-            ss += x[j] * x[j];
-
-        ss = 1.0f / sqrtf((ss / size) + 1e-6f);
-
-        for (int j = 0; j < size; j++)
-            o[j] = weight[j] * (ss * x[j]);
+        try {
+            metalContext->executeRMSNorm(o, x, weight, size);
+            return;
+        } catch (const std::exception& e) {
+            disableMetalBackend("RMSNorm", e);
+        } catch (...) {
+            disableMetalBackend("RMSNorm", "unknown Metal error");
+        }
     }
+
+    // CPU fallback
+    float ss = 0;
+    for (int j = 0; j < size; j++)
+        ss += x[j] * x[j];
+
+    ss = 1.0f / sqrtf((ss / size) + 1e-6f);
+
+    for (int j = 0; j < size; j++)
+        o[j] = weight[j] * (ss * x[j]);
 }
 
 void MetalQwen3::metal_softmax(float *x, int size) {
     if (metalContext) {
-        metalContext->executeSoftmax(x, size);
-    } else {
-        // CPU fallback
-        float max_val = 0;
-        for (int i = 0; i < size; i++)
-            if (x[i] > max_val)
-                max_val = x[i];
-
-        float sum = 0;
-        for (int i = 0; i < size; i++) {
-            x[i] = expf(x[i] - max_val);
-            sum += x[i];
+        try {
+            metalContext->executeSoftmax(x, size);
+            return;
+        } catch (const std::exception& e) {
+            disableMetalBackend("Softmax", e);
+        } catch (...) {
+            disableMetalBackend("Softmax", "unknown Metal error");
         }
-
-        for (int i = 0; i < size; i++)
-            x[i] /= sum;
     }
+
+    // CPU fallback
+    float max_val = 0;
+    for (int i = 0; i < size; i++)
+        if (x[i] > max_val)
+            max_val = x[i];
+
+    float sum = 0;
+    for (int i = 0; i < size; i++) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+
+    for (int i = 0; i < size; i++)
+        x[i] /= sum;
 }
 
 void MetalQwen3::metal_matmul(float *xout, MetalQuantizedTensor *x, MetalQuantizedTensor *w, int n, int d) {
     if (metalContext) {
-        metalContext->executeQuantizedMatMul(xout, x->q, x->s, w->q, w->s, n, d, GS);
-    } else {
-        // CPU fallback
-        for (int i = 0; i < d; i++) {
-            float val = 0;
-            int in = i * n;
-
-            for (int j = 0; j <= n - GS; j += GS) {
-                int32_t ival = 0;
-                for (int k = 0; k < GS; k++)
-                    ival += x->q[j + k] * w->q[in + j + k];
-
-                val += ((float) ival) * w->s[(in + j) / GS] * x->s[j / GS];
-            }
-
-            xout[i] = val;
+        try {
+            metalContext->executeQuantizedMatMul(xout, x->q, x->s, w->q, w->s, n, d, GS);
+            return;
+        } catch (const std::exception& e) {
+            disableMetalBackend("QuantizedMatMul", e);
+        } catch (...) {
+            disableMetalBackend("QuantizedMatMul", "unknown Metal error");
         }
+    }
+
+    // CPU fallback
+    for (int i = 0; i < d; i++) {
+        float val = 0;
+        int in = i * n;
+
+        for (int j = 0; j <= n - GS; j += GS) {
+            int32_t ival = 0;
+            for (int k = 0; k < GS; k++)
+                ival += x->q[j + k] * w->q[in + j + k];
+
+            val += ((float) ival) * w->s[(in + j) / GS] * x->s[j / GS];
+        }
+
+        xout[i] = val;
     }
 }
 
 void MetalQwen3::metal_swiglu(float *hb, float *hb2, int hidden_dim) {
     if (metalContext) {
-        metalContext->executeSwiGLU(hb, hb2, hidden_dim);
-    } else {
-        // CPU fallback
-        for (int i = 0; i < hidden_dim; i++)
-            hb[i] *= hb2[i] * (1.0f / (1.0f + expf(-hb[i])));
+        try {
+            metalContext->executeSwiGLU(hb, hb2, hidden_dim);
+            return;
+        } catch (const std::exception& e) {
+            disableMetalBackend("SwiGLU", e);
+        } catch (...) {
+            disableMetalBackend("SwiGLU", "unknown Metal error");
+        }
     }
+
+    // CPU fallback
+    for (int i = 0; i < hidden_dim; i++)
+        hb[i] *= hb2[i] * (1.0f / (1.0f + expf(-hb[i])));
 }
 
 void MetalQwen3::metal_rope(float *q, float *k, int head_dim, int pos, int n_heads, int n_kv_heads, int layer) {
@@ -535,49 +589,56 @@ void MetalQwen3::metal_rope(float *q, float *k, int head_dim, int pos, int n_hea
     MetalTransformerWeights* w = &metalTransformer.weights;
 
     if (metalContext) {
-        metalContext->executeRoPE(q, k, head_dim, pos, n_heads, n_kv_heads,
-                                  w->q_norm_weights + layer * head_dim,
-                                  w->k_norm_weights + layer * head_dim);
-    } else {
-        // CPU fallback - EXACT COPY from original
-        // Q-RMSNorm + rotate each query head
-        for (int h = 0; h < n_heads; h++) {
-            float *q_head = q + h * head_dim;
-
-            // RMS norm for Q with correct layer offset
-            metal_rmsnorm(q_head, q_head, w->q_norm_weights + layer * head_dim, head_dim);
-
-            // RoPE for Q
-            for (int j = 0; j < head_dim/2; j++) {
-                float freq = powf(1e6, -(float)j / (head_dim/2));
-                float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
-
-                float x = q_head[j]; // real part
-                float y = q_head[j + head_dim/2]; // imag part
-
-                q_head[j] = x * cos_freq - y * sin_freq; // new real
-                q_head[j + head_dim/2] = x * sin_freq + y * cos_freq; // new imag
-            }
+        try {
+            metalContext->executeRoPE(q, k, head_dim, pos, n_heads, n_kv_heads,
+                                      w->q_norm_weights + layer * head_dim,
+                                      w->k_norm_weights + layer * head_dim);
+            return;
+        } catch (const std::exception& e) {
+            disableMetalBackend("RoPE", e);
+        } catch (...) {
+            disableMetalBackend("RoPE", "unknown Metal error");
         }
+    }
 
-        // K-RMSNorm + rotate each key head
-        for (int h = 0; h < n_kv_heads; h++) {
-            float *k_head = k + h * head_dim;
+    // CPU fallback - EXACT COPY from original
+    // Q-RMSNorm + rotate each query head
+    for (int h = 0; h < n_heads; h++) {
+        float *q_head = q + h * head_dim;
 
-            // RMS norm for K with correct layer offset
-            metal_rmsnorm(k_head, k_head, w->k_norm_weights + layer * head_dim, head_dim);
+        // RMS norm for Q with correct layer offset
+        metal_rmsnorm(q_head, q_head, w->q_norm_weights + layer * head_dim, head_dim);
 
-            // RoPE for K
-            for (int j = 0; j < head_dim/2; j++) {
-                float freq = powf(1e6, -(float)j / (head_dim/2));
-                float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+        // RoPE for Q
+        for (int j = 0; j < head_dim/2; j++) {
+            float freq = powf(1e6, -(float)j / (head_dim/2));
+            float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
 
-                float x = k_head[j];
-                float y = k_head[j + head_dim/2];
+            float x = q_head[j]; // real part
+            float y = q_head[j + head_dim/2]; // imag part
 
-                k_head[j] = x * cos_freq - y * sin_freq;
-                k_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
-            }
+            q_head[j] = x * cos_freq - y * sin_freq; // new real
+            q_head[j + head_dim/2] = x * sin_freq + y * cos_freq; // new imag
+        }
+    }
+
+    // K-RMSNorm + rotate each key head
+    for (int h = 0; h < n_kv_heads; h++) {
+        float *k_head = k + h * head_dim;
+
+        // RMS norm for K with correct layer offset
+        metal_rmsnorm(k_head, k_head, w->k_norm_weights + layer * head_dim, head_dim);
+
+        // RoPE for K
+        for (int j = 0; j < head_dim/2; j++) {
+            float freq = powf(1e6, -(float)j / (head_dim/2));
+            float cos_freq = cosf(pos * freq), sin_freq = sinf(pos * freq);
+
+            float x = k_head[j];
+            float y = k_head[j + head_dim/2];
+
+            k_head[j] = x * cos_freq - y * sin_freq;
+            k_head[j + head_dim/2] = x * sin_freq + y * cos_freq;
         }
     }
 }
@@ -585,40 +646,47 @@ void MetalQwen3::metal_rope(float *q, float *k, int head_dim, int pos, int n_hea
 void MetalQwen3::metal_attention(float *xb, float *q, float *att, float *key_cache, float *value_cache,
                                 int pos, int head_dim, int n_heads, int n_kv_heads, int seq_len, int kv_dim, uint64_t loff, int kv_mul) {
     if (metalContext) {
-        metalContext->executeAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
-    } else {
-        // CPU fallback - multihead attention. iterate over all heads
-        for (int h = 0; h < n_heads; h++) {
-            // get the query vector for this head
-            float *q_head = q + h * head_dim;
-            // attention scores for this head
-            float *att_head = att + h * seq_len;
-            // iterate over all timesteps, including the current one
-            for (int t = 0; t <= pos; t++) {
-                // get the key vector for this head and at this timestep
-                float *k = key_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
-                // calculate the attention score as the dot product of q and k
-                float score = 0;
-                for (int i = 0; i < head_dim; i++)
-                    score += q_head[i] * k[i];
+        try {
+            metalContext->executeAttention(xb, q, att, key_cache, value_cache, pos, head_dim, n_heads, n_kv_heads, seq_len, kv_dim, loff, kv_mul);
+            return;
+        } catch (const std::exception& e) {
+            disableMetalBackend("Attention", e);
+        } catch (...) {
+            disableMetalBackend("Attention", "unknown Metal error");
+        }
+    }
 
-                // save the score to the attention buffer
-                att_head[t] = score / sqrtf(head_dim);
-            }
+    // CPU fallback - multihead attention. iterate over all heads
+    for (int h = 0; h < n_heads; h++) {
+        // get the query vector for this head
+        float *q_head = q + h * head_dim;
+        // attention scores for this head
+        float *att_head = att + h * seq_len;
+        // iterate over all timesteps, including the current one
+        for (int t = 0; t <= pos; t++) {
+            // get the key vector for this head and at this timestep
+            float *k = key_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+            // calculate the attention score as the dot product of q and k
+            float score = 0;
+            for (int i = 0; i < head_dim; i++)
+                score += q_head[i] * k[i];
 
-            // softmax the scores to get attention weights, from 0..pos inclusively
-            metal_softmax(att_head, pos + 1);
+            // save the score to the attention buffer
+            att_head[t] = score / sqrtf(head_dim);
+        }
 
-            // weighted sum of the values, store back into xb
-            float *xb_head = xb + h * head_dim;
-            memset(xb_head, 0, head_dim * sizeof(float));
-            for (int t = 0; t <= pos; t++) {
-                // get the value vector for this head and at this timestep
-                float *v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
-                // get the attention weight for this timestep, then accumulate the weighted value into xb
-                for (int i = 0; i < head_dim; i++)
-                    xb_head[i] += att_head[t] * v[i];
-            }
+        // softmax the scores to get attention weights, from 0..pos inclusively
+        metal_softmax(att_head, pos + 1);
+
+        // weighted sum of the values, store back into xb
+        float *xb_head = xb + h * head_dim;
+        memset(xb_head, 0, head_dim * sizeof(float));
+        for (int t = 0; t <= pos; t++) {
+            // get the value vector for this head and at this timestep
+            float *v = value_cache + loff + t * kv_dim + (h / kv_mul) * head_dim;
+            // get the attention weight for this timestep, then accumulate the weighted value into xb
+            for (int i = 0; i < head_dim; i++)
+                xb_head[i] += att_head[t] * v[i];
         }
     }
 }
