@@ -23,6 +23,76 @@
 #include <cmath>
 #include <cstring>
 #include <sys/sysctl.h>
+#include <dlfcn.h>
+#include <mach-o/dyld.h>
+#include <execinfo.h>
+#include <cxxabi.h>
+#include <signal.h>
+#include <unistd.h>
+#include <vector>
+#include <string>
+#include <cerrno>
+
+// Print stack trace
+static void printStackTrace() {
+    const int max_frames = 128;
+    void* frame_addresses[max_frames];
+
+    int num_frames = backtrace(frame_addresses, max_frames);
+    char** symbols = backtrace_symbols(frame_addresses, num_frames);
+
+    std::cerr << "\n=== STACK TRACE ===" << std::endl;
+    for (int i = 0; i < num_frames; i++) {
+        // Try to demangle C++ symbols
+        char* mangled_name = nullptr;
+        char* offset = nullptr;
+        char* end_offset = nullptr;
+
+        // Parse the symbol string
+        for (char* p = symbols[i]; *p; ++p) {
+            if (*p == '(') {
+                mangled_name = p;
+            } else if (*p == '+') {
+                offset = p;
+            } else if (*p == ')') {
+                end_offset = p;
+                break;
+            }
+        }
+
+        if (mangled_name && offset && end_offset && mangled_name < offset) {
+            *mangled_name++ = '\0';
+            *offset++ = '\0';
+            *end_offset = '\0';
+
+            int status;
+            char* real_name = abi::__cxa_demangle(mangled_name, nullptr, nullptr, &status);
+
+            if (status == 0) {
+                std::cerr << "  [" << i << "] " << symbols[i] << " : "
+                          << real_name << " + " << offset << std::endl;
+                free(real_name);
+            } else {
+                std::cerr << "  [" << i << "] " << symbols[i] << " : "
+                          << mangled_name << " + " << offset << std::endl;
+            }
+        } else {
+            std::cerr << "  [" << i << "] " << symbols[i] << std::endl;
+        }
+    }
+    std::cerr << "=== END STACK TRACE ===\n" << std::endl;
+
+    free(symbols);
+}
+
+// Signal handler for crashes
+static void signalHandler(int sig, siginfo_t* info, void* context) {
+    std::cerr << "\n❌ FATAL ERROR: Caught signal " << sig << " (" << strsignal(sig) << ")" << std::endl;
+    std::cerr << "Signal code: " << info->si_code << std::endl;
+    std::cerr << "Fault address: " << info->si_addr << std::endl;
+    printStackTrace();
+    _exit(1);
+}
 
 MetalContext::MetalContext() : initialized(false), device(nullptr), commandQueue(nullptr),
                                  batchCommandBuffer(nullptr), batchEncoder(nullptr) {
@@ -33,6 +103,28 @@ MetalContext::~MetalContext() {
 }
 
 bool MetalContext::initialize() {
+    // Install signal handlers for crash reporting
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = signalHandler;
+
+    sigaction(SIGSEGV, &sa, nullptr);  // Segmentation fault
+    sigaction(SIGBUS, &sa, nullptr);   // Bus error
+    sigaction(SIGILL, &sa, nullptr);   // Illegal instruction
+    sigaction(SIGFPE, &sa, nullptr);   // Floating point exception
+    sigaction(SIGABRT, &sa, nullptr);  // Abort signal
+
+    std::cout << "✓ Signal handlers installed for crash reporting" << std::endl;
+
+    // Enable Metal validation and debug layers
+    setenv("METAL_DEVICE_WRAPPER_TYPE", "1", 1);
+    setenv("METAL_DEBUG_ERROR_MODE", "1", 1);
+    setenv("MTL_DEBUG_LAYER", "1", 1);
+    setenv("MTL_SHADER_VALIDATION", "1", 1);
+    std::cout << "✓ Metal debug and validation layers enabled" << std::endl;
+
     // Print system diagnostics
     std::cout << "\n=== System Diagnostics ===" << std::endl;
 
@@ -68,17 +160,203 @@ bool MetalContext::initialize() {
 
     std::cout << "=========================\n" << std::endl;
 
-    // Get the default Metal device
-    device = MTL::CreateSystemDefaultDevice();
+    // Check Metal framework availability
+    std::cout << "🔍 Checking Metal framework availability..." << std::endl;
+
+    // Check if Metal.framework is loaded
+    void* metalFramework = dlopen("/System/Library/Frameworks/Metal.framework/Metal", RTLD_LAZY);
+    if (metalFramework) {
+        std::cout << "✓ Metal.framework loaded successfully" << std::endl;
+        dlclose(metalFramework);
+    } else {
+        std::cerr << "✗ Metal.framework failed to load: " << dlerror() << std::endl;
+    }
+
+    // Check for Metal device availability via sysctl
+    char gpu_family[256];
+    size_t gpu_size = sizeof(gpu_family);
+    if (sysctlbyname("hw.optional.arm.FEAT_DotProd", &gpu_family, &gpu_size, NULL, 0) == 0) {
+        std::cout << "✓ Apple Silicon GPU features detected" << std::endl;
+    } else {
+        std::cout << "⚠ Apple Silicon GPU features not detected (may be Intel Mac)" << std::endl;
+    }
+
+    // Try to create Metal device with detailed error checking
+    std::cout << "\n🚀 Creating Metal device..." << std::endl;
+    std::cout << "   Calling MTL::CreateSystemDefaultDevice()..." << std::endl;
+
+    // Capture stack trace before device creation
+    std::cout << "   Current call stack before Metal device creation:" << std::endl;
+    printStackTrace();
+
+    bool exception_caught = false;
+    std::string exception_message;
+
+    try {
+        std::cout << "\n   → Attempting device creation..." << std::endl;
+        errno = 0;  // Clear errno before call
+
+        device = MTL::CreateSystemDefaultDevice();
+
+        int saved_errno = errno;
+        std::cout << "   → MTL::CreateSystemDefaultDevice() returned: "
+                  << (device ? "SUCCESS" : "NULL") << std::endl;
+
+        if (saved_errno != 0) {
+            std::cerr << "   → errno after call: " << saved_errno
+                      << " (" << strerror(saved_errno) << ")" << std::endl;
+        }
+
+    } catch (const std::runtime_error& e) {
+        exception_caught = true;
+        exception_message = e.what();
+        std::cerr << "\n❌ RUNTIME_ERROR EXCEPTION during Metal device creation:" << std::endl;
+        std::cerr << "   Type: std::runtime_error" << std::endl;
+        std::cerr << "   Message: " << e.what() << std::endl;
+        std::cerr << "   Exception stack trace:" << std::endl;
+        printStackTrace();
+        device = nullptr;
+    } catch (const std::exception& e) {
+        exception_caught = true;
+        exception_message = e.what();
+        std::cerr << "\n❌ STD::EXCEPTION during Metal device creation:" << std::endl;
+        std::cerr << "   Type: " << typeid(e).name() << std::endl;
+        std::cerr << "   Message: " << e.what() << std::endl;
+        std::cerr << "   Exception stack trace:" << std::endl;
+        printStackTrace();
+        device = nullptr;
+    } catch (...) {
+        exception_caught = true;
+        exception_message = "Unknown exception type";
+        std::cerr << "\n❌ UNKNOWN EXCEPTION during Metal device creation" << std::endl;
+        std::cerr << "   This is NOT a std::exception - possibly Objective-C exception" << std::endl;
+        std::cerr << "   Exception stack trace:" << std::endl;
+        printStackTrace();
+        device = nullptr;
+    }
+
     if (!device) {
+        std::cerr << "\n" << std::string(60, '=') << std::endl;
+        std::cerr << "❌ CRITICAL ERROR: Metal Device Creation Failed" << std::endl;
+        std::cerr << std::string(60, '=') << std::endl;
+
+        if (exception_caught) {
+            std::cerr << "\n🔥 EXCEPTION DETAILS:" << std::endl;
+            std::cerr << "   Message: " << exception_message << std::endl;
+        } else {
+            std::cerr << "\n⚠️  NO EXCEPTION THROWN - Function returned NULL" << std::endl;
+            std::cerr << "   This suggests Metal framework silently failed" << std::endl;
+        }
+
+        std::cerr << "\n=== DIAGNOSTIC INFORMATION ===" << std::endl;
+
+        // Check macOS version compatibility
+        char os_release[256];
+        size_t os_rel_size = sizeof(os_release);
+        if (sysctlbyname("kern.osrelease", &os_release, &os_rel_size, NULL, 0) == 0) {
+            std::cerr << "Kernel version: " << os_release << std::endl;
+            int major_version = atoi(os_release);
+            if (major_version < 15) {  // macOS 10.11 = Darwin 15
+                std::cerr << "⚠ Kernel version too old for Metal (need Darwin 15+)" << std::endl;
+            }
+        }
+
+        // Check CPU architecture
+        #if defined(__arm64__) || defined(__aarch64__)
+            std::cerr << "\nArchitecture: Apple Silicon (ARM64) - Metal SHOULD be available" << std::endl;
+            std::cerr << "\n⚠️ CRITICAL: Apple Silicon detected but Metal device creation failed!" << std::endl;
+            std::cerr << "\nPossible causes for M1 Pro failure:" << std::endl;
+            std::cerr << "  1. macOS version 14.5 may have Metal framework issues" << std::endl;
+            std::cerr << "     → Try updating to macOS 14.6+ or 15.0+" << std::endl;
+            std::cerr << "  2. System integrity issue - try:" << std::endl;
+            std::cerr << "     → sudo launchctl kickstart -k system/com.apple.gpuswitcherd" << std::endl;
+            std::cerr << "  3. Metal framework cache corruption:" << std::endl;
+            std::cerr << "     → sudo rm -rf /System/Library/Caches/com.apple.metal/*" << std::endl;
+            std::cerr << "  4. Running from external drive may cause framework load issues" << std::endl;
+            std::cerr << "     → Try copying binary to /Applications or ~/bin" << std::endl;
+            std::cerr << "  5. System Extension blocking (check System Settings > Privacy & Security)" << std::endl;
+        #elif defined(__x86_64__)
+            std::cerr << "\nArchitecture: Intel (x86_64)" << std::endl;
+            std::cerr << "\nIntel Mac detected - checking Metal compatibility:" << std::endl;
+            std::cerr << "  → Intel Macs need dedicated GPU for Metal support" << std::endl;
+            std::cerr << "  → Check: 'system_profiler SPDisplaysDataType' for GPU info" << std::endl;
+            std::cerr << "  → Integrated Intel graphics may not support Metal compute shaders" << std::endl;
+        #endif
+
+        // Check if running in VM
+        char hypervisor[256];
+        size_t hyp_size = sizeof(hypervisor);
+        if (sysctlbyname("kern.hv_support", &hypervisor, &hyp_size, NULL, 0) == 0) {
+            std::cerr << "\n⚠ Hypervisor detected - may be running in VM" << std::endl;
+            std::cerr << "   → Metal does NOT work in virtual machines" << std::endl;
+        }
+
+        // Actually fetch recent Metal system logs
+        std::cerr << "\n📋 Fetching recent Metal system logs (last 2 minutes)..." << std::endl;
+        FILE* pipe = popen("log show --predicate 'subsystem == \"com.apple.Metal\" OR processImagePath CONTAINS \"Metal\"' --last 2m --style compact 2>&1 | tail -50", "r");
+        if (pipe) {
+            char buffer[256];
+            bool found_logs = false;
+            std::cerr << "\n--- Recent Metal Logs ---" << std::endl;
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                found_logs = true;
+                std::cerr << buffer;
+            }
+            if (!found_logs) {
+                std::cerr << "(No recent Metal logs found)" << std::endl;
+            }
+            std::cerr << "--- End Logs ---\n" << std::endl;
+            pclose(pipe);
+        }
+
+        // Check GPU availability
+        std::cerr << "\n🖥️  Checking GPU information..." << std::endl;
+        pipe = popen("system_profiler SPDisplaysDataType 2>&1 | grep -A 10 'Chipset\\|Metal'", "r");
+        if (pipe) {
+            char buffer[256];
+            std::cerr << "\n--- GPU Info ---" << std::endl;
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                std::cerr << buffer;
+            }
+            std::cerr << "--- End GPU Info ---\n" << std::endl;
+            pclose(pipe);
+        }
+
+        // Check for Metal framework dynamic library issues
+        std::cerr << "\n🔍 Checking Metal framework libraries..." << std::endl;
+        std::vector<std::string> metal_libs = {
+            "/System/Library/Frameworks/Metal.framework/Metal",
+            "/System/Library/Frameworks/MetalKit.framework/MetalKit",
+            "/System/Library/Frameworks/MetalPerformanceShaders.framework/MetalPerformanceShaders"
+        };
+
+        for (const auto& lib : metal_libs) {
+            if (access(lib.c_str(), F_OK) == 0) {
+                std::cerr << "   ✓ Found: " << lib << std::endl;
+                // Try to load it
+                void* handle = dlopen(lib.c_str(), RTLD_LAZY);
+                if (handle) {
+                    std::cerr << "     → Loads successfully" << std::endl;
+                    dlclose(handle);
+                } else {
+                    std::cerr << "     ✗ Failed to load: " << dlerror() << std::endl;
+                }
+            } else {
+                std::cerr << "   ✗ Missing: " << lib << std::endl;
+            }
+        }
+
+        std::cerr << "\n💡 NEXT STEPS TO DEBUG:" << std::endl;
+        std::cerr << "   1. Check Console.app for crash reports or Metal errors" << std::endl;
+        std::cerr << "   2. Run with elevated debugging:" << std::endl;
+        std::cerr << "      METAL_DEVICE_WRAPPER_TYPE=1 ./your_binary 2>&1 | tee metal_debug.log" << std::endl;
+        std::cerr << "   3. Verify Metal works with simple test:" << std::endl;
+        std::cerr << "      swift -e 'import Metal; print(MTLCreateSystemDefaultDevice())'" << std::endl;
+        std::cerr << "   4. Check for security software blocking Metal framework" << std::endl;
+
+        std::cerr << "\n=== END DIAGNOSTICS ===" << std::endl;
+
         logError("Failed to create Metal device");
-        std::cerr << "\nPossible reasons:" << std::endl;
-        std::cerr << "  1. Running on a Mac without Metal support (pre-2012 hardware)" << std::endl;
-        std::cerr << "  2. Running in a virtual machine or Docker container" << std::endl;
-        std::cerr << "  3. Metal drivers not installed or corrupted" << std::endl;
-        std::cerr << "  4. macOS version too old (requires 10.11+ for Metal)" << std::endl;
-        std::cerr << "\nNote: This software requires Apple Silicon (M1/M2/M3/M4) or" << std::endl;
-        std::cerr << "      Intel Mac with Metal support for GPU acceleration." << std::endl;
         return false;
     }
 
