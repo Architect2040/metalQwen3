@@ -71,8 +71,11 @@ typedef struct {
     MetalQuantizedTensor *wcls;
 } MetalTransformerWeights;
 
+// Forward declare MTL::Buffer
+namespace MTL { class Buffer; }
+
 typedef struct {
-    // current wave of activations
+    // CPU buffers (for compatibility and final results)
     float *x; // activation at current time stamp (dim,)
     float *xb; // same, but inside a residual branch (dim,)
     float *hb; // buffer for hidden dimension in the ffn (hidden_dim,)
@@ -87,6 +90,23 @@ typedef struct {
     // kv cache
     float *key_cache;   // (layer, seq_len, dim)
     float *value_cache; // (layer, seq_len, dim)
+
+    // GPU buffers for zero-copy Metal operations (persistent across tokens)
+    MTL::Buffer *gpu_x;
+    MTL::Buffer *gpu_xb;
+    MTL::Buffer *gpu_hb;
+    MTL::Buffer *gpu_hb2;
+    MTL::Buffer *gpu_q;
+    MTL::Buffer *gpu_k;
+    MTL::Buffer *gpu_v;
+    MTL::Buffer *gpu_att;
+    MTL::Buffer *gpu_logits;
+    MTL::Buffer *gpu_key_cache;
+    MTL::Buffer *gpu_value_cache;
+    MTL::Buffer *gpu_xq_q;  // quantized buffers
+    MTL::Buffer *gpu_xq_s;
+    MTL::Buffer *gpu_hq_q;
+    MTL::Buffer *gpu_hq_s;
 } MetalRunState;
 
 typedef struct {

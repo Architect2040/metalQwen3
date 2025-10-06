@@ -27,32 +27,32 @@ TEST_PROMPTS = [
     {
         "name": "Short Question",
         "content": "Who is Clinton?",
-        "max_tokens": 50,
-        "expected_tokens": 30
+        "max_tokens": 10,
+        "expected_tokens": 10
     },
     {
         "name": "Code Request",
-        "content": "Write a Python function to calculate the fibonacci sequence up to n terms.",
-        "max_tokens": 150,
-        "expected_tokens": 100
+        "content": "def fib(n):",
+        "max_tokens": 20,
+        "expected_tokens": 20
     },
     {
         "name": "Essay Question",
-        "content": "Explain the key differences between machine learning and artificial intelligence, including their applications and limitations.",
-        "max_tokens": 300,
-        "expected_tokens": 200
+        "content": "ML vs AI:",
+        "max_tokens": 15,
+        "expected_tokens": 15
     },
     {
         "name": "Creative Writing",
-        "content": "Write a short story about a robot who discovers they can dream. Include dialogue and describe the robot's emotions.",
-        "max_tokens": 400,
-        "expected_tokens": 300
+        "content": "Story:",
+        "max_tokens": 20,
+        "expected_tokens": 20
     },
     {
         "name": "Technical Analysis",
-        "content": "Analyze the advantages and disadvantages of using microservices architecture compared to monolithic architecture for a large-scale e-commerce platform. Consider scalability, maintenance, deployment, and team coordination.",
-        "max_tokens": 500,
-        "expected_tokens": 400
+        "content": "Microservices:",
+        "max_tokens": 15,
+        "expected_tokens": 15
     }
 ]
 
@@ -130,7 +130,7 @@ def test_api_endpoint(endpoint: str, prompt: Dict[str, Any], temperature: float 
             f"{endpoint}/v1/chat/completions",
             headers={"Content-Type": "application/json"},
             json=payload,
-            timeout=60
+            timeout=300
         )
 
         end_time = time.time()

@@ -102,6 +102,9 @@ private:
     std::vector<MTL::Buffer*> bufferPool;
     std::unordered_map<size_t, std::vector<MTL::Buffer*>> sizedBufferPools;
 
+    // Persistent buffers for hot paths (reused across all forward passes)
+    std::unordered_map<std::string, MTL::Buffer*> persistentBuffers;
+
     // Helper methods
     MTL::Library* loadLibrary(const std::string& libraryName);
     std::string findLibraryPath(const std::string& libraryName);
@@ -110,6 +113,7 @@ private:
     // Optimized buffer management
     MTL::Buffer* getPooledBuffer(size_t size);
     void returnBufferToPool(MTL::Buffer* buffer, size_t size);
+    MTL::Buffer* getPersistentBuffer(const std::string& key, size_t size);  // Get or create persistent buffer
 
     // Internal shader execution (for batching)
     void internalExecuteRMSNorm(MTL::ComputeCommandEncoder* encoder, MTL::Buffer* output, MTL::Buffer* input, MTL::Buffer* weight, int size);

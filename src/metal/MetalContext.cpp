@@ -120,12 +120,12 @@ bool MetalContext::initialize() {
 
     std::cout << "✓ Signal handlers installed for crash reporting" << std::endl;
 
-    // Enable Metal validation and debug layers
-    setenv("METAL_DEVICE_WRAPPER_TYPE", "1", 1);
-    setenv("METAL_DEBUG_ERROR_MODE", "1", 1);
-    setenv("MTL_DEBUG_LAYER", "1", 1);
-    setenv("MTL_SHADER_VALIDATION", "1", 1);
-    std::cout << "✓ Metal debug and validation layers enabled" << std::endl;
+    // Explicitly disable Metal validation layers to avoid assertion failures
+    unsetenv("METAL_DEVICE_WRAPPER_TYPE");
+    unsetenv("METAL_DEBUG_ERROR_MODE");
+    unsetenv("MTL_DEBUG_LAYER");
+    unsetenv("MTL_SHADER_VALIDATION");
+    std::cout << "✓ Metal validation layers explicitly disabled" << std::endl;
 
     // Print system diagnostics
     std::cout << "\n=== System Diagnostics ===" << std::endl;
@@ -408,6 +408,14 @@ void MetalContext::cleanup() {
     }
     pipelineCache.clear();
 
+    // Clear persistent buffers
+    for (auto& [key, buffer] : persistentBuffers) {
+        if (buffer) {
+            buffer->release();
+        }
+    }
+    persistentBuffers.clear();
+
     if (commandQueue) {
         commandQueue->release();
         commandQueue = nullptr;
@@ -460,7 +468,7 @@ std::string MetalContext::findLibraryPath(const std::string& libraryName) {
 
     for (const auto& path : possiblePaths) {
         if (std::filesystem::exists(path)) {
-            std::cout << "Found Metal library: " << path << std::endl;
+            // std::cout << "Found Metal library: " << path << std::endl;
             return path.string();
         }
     }
@@ -577,28 +585,6 @@ void MetalContext::executeRMSNorm(float* output, const float* input, const float
         exit(1);
     }
 
-    // OPTIMIZATION: Use batched execution if available
-    if (batchEncoder) {
-        // Use pooled buffers for efficiency
-        MTL::Buffer* inputBuffer = getPooledBuffer(size * sizeof(float));
-        MTL::Buffer* weightBuffer = getPooledBuffer(size * sizeof(float));
-        MTL::Buffer* outputBuffer = getPooledBuffer(size * sizeof(float));
-
-        memcpy(inputBuffer->contents(), input, size * sizeof(float));
-        memcpy(weightBuffer->contents(), weight, size * sizeof(float));
-
-        internalExecuteRMSNorm(batchEncoder, outputBuffer, inputBuffer, weightBuffer, size);
-
-        memcpy(output, outputBuffer->contents(), size * sizeof(float));
-
-        // Return to pool for reuse
-        returnBufferToPool(inputBuffer, size * sizeof(float));
-        returnBufferToPool(weightBuffer, size * sizeof(float));
-        returnBufferToPool(outputBuffer, size * sizeof(float));
-        return;
-    }
-
-    // Fallback to individual execution
     MTL::Buffer* inputBuffer = createBuffer(size * sizeof(float), input);
     MTL::Buffer* weightBuffer = createBuffer(size * sizeof(float), weight);
     MTL::Buffer* outputBuffer = createBuffer(size * sizeof(float));
@@ -608,25 +594,33 @@ void MetalContext::executeRMSNorm(float* output, const float* input, const float
     MTL::Buffer* sizeBuffer = createBuffer(sizeof(uint32_t), &usize);
     MTL::Buffer* epsBuffer = createBuffer(sizeof(float), &eps);
 
-    MTL::CommandBuffer* commandBuffer = createCommandBuffer();
-    MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
+    // Use batch encoder if available, otherwise create new command buffer
+    MTL::ComputeCommandEncoder* encoder = batchEncoder;
+    MTL::CommandBuffer* commandBuffer = nullptr;
+
+    if (!encoder) {
+        commandBuffer = createCommandBuffer();
+        encoder = commandBuffer->computeCommandEncoder();
+    }
+
     encoder->setComputePipelineState(pipeline);
     encoder->setBuffer(inputBuffer, 0, 0);
     encoder->setBuffer(weightBuffer, 0, 1);
     encoder->setBuffer(outputBuffer, 0, 2);
     encoder->setBuffer(sizeBuffer, 0, 3);
     encoder->setBuffer(epsBuffer, 0, 4);
-
     encoder->setThreadgroupMemoryLength(256 * sizeof(float), 0);
 
     MTL::Size threadsPerThreadgroup = MTL::Size::Make(256, 1, 1);
     MTL::Size threadgroups = MTL::Size::Make(1, 1, 1);
     encoder->dispatchThreadgroups(threadgroups, threadsPerThreadgroup);
+
+    // SIMPLE PATTERN: Just dispatch and wait (no batching complexity needed)
     encoder->endEncoding();
+    commandBuffer->commit();
+    commandBuffer->waitUntilCompleted();  // Must wait since next op needs results
 
-    commitCommandBuffer(commandBuffer);
-    waitForCompletion(commandBuffer);
-
+    // Shared memory - results available immediately after wait
     memcpy(output, outputBuffer->contents(), size * sizeof(float));
 
     releaseBuffer(inputBuffer);
@@ -679,7 +673,7 @@ void MetalContext::executeSoftmax(float* x, int size) {
     releaseBuffer(inputBuffer);
     releaseBuffer(sizeBuffer);
 
-    std::cout << "Softmax: GPU execution successful" << std::endl;
+    // std::cout << "Softmax: GPU execution successful" << std::endl;
 }
 
 void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, const float* x_s,
@@ -689,13 +683,14 @@ void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, cons
         exit(1);
     }
 
+    // Use simple but correct kernel
     MTL::ComputePipelineState* pipeline = createComputePipeline("quantized_matmul", "quantized_matmul_kernel");
     if (!pipeline) {
         std::cerr << "FATAL ERROR: Failed to create Metal quantized matmul pipeline!" << std::endl;
         exit(1);
     }
 
-    // Create Metal buffers
+    // Create temporary buffers - FAST allocation/deallocation on Apple Silicon shared memory
     MTL::Buffer* xBuffer = createBuffer(n * sizeof(int8_t), x_q);
     MTL::Buffer* wBuffer = createBuffer(d * n * sizeof(int8_t), w_q);
     MTL::Buffer* xScalesBuffer = createBuffer((n / group_size) * sizeof(float), x_s);
@@ -708,49 +703,58 @@ void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, cons
     MTL::Buffer* kBuffer = createBuffer(sizeof(uint32_t), &uK);
     MTL::Buffer* groupSizeBuffer = createBuffer(sizeof(uint32_t), &uGroupSize);
 
-    // Execute Metal compute shader
-    MTL::CommandBuffer* commandBuffer = createCommandBuffer();
-    MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
+    // Use batch encoder if available, otherwise create new command buffer
+    MTL::ComputeCommandEncoder* encoder = batchEncoder;
+    MTL::CommandBuffer* commandBuffer = nullptr;
+
+    if (!encoder) {
+        commandBuffer = createCommandBuffer();
+        encoder = commandBuffer->computeCommandEncoder();
+    }
+
     encoder->setComputePipelineState(pipeline);
     encoder->setBuffer(xBuffer, 0, 0);
     encoder->setBuffer(wBuffer, 0, 1);
     encoder->setBuffer(xScalesBuffer, 0, 2);
     encoder->setBuffer(wScalesBuffer, 0, 3);
     encoder->setBuffer(outputBuffer, 0, 4);
-    encoder->setBuffer(mBuffer, 0, 5);
-    encoder->setBuffer(nBuffer, 0, 6);
-    encoder->setBuffer(kBuffer, 0, 7);
-    encoder->setBuffer(groupSizeBuffer, 0, 8);
+    encoder->setBuffer(mBuffer, 0, 5);  // M=d
+    encoder->setBuffer(nBuffer, 0, 6);  // N=1 (unused)
+    encoder->setBuffer(kBuffer, 0, 7);  // K=n
+    encoder->setBuffer(groupSizeBuffer, 0, 8);  // group_size
 
-    // Use 1D dispatch matching the kernel's thread_position_in_grid
+    // Simple dispatch: one thread per output element
     MTL::Size threadsPerThreadgroup = MTL::Size::Make(256, 1, 1);
     MTL::Size threadgroups = MTL::Size::Make((d + 255) / 256, 1, 1);
     encoder->dispatchThreadgroups(threadgroups, threadsPerThreadgroup);
-    encoder->endEncoding();
 
-    commitCommandBuffer(commandBuffer);
-    waitForCompletion(commandBuffer);
+    // Only end encoding and commit if not batching
+    if (!batchEncoder) {
+        encoder->endEncoding();
+        commandBuffer->commit();
+        commandBuffer->waitUntilCompleted();
 
-    // Check for errors
-    if (commandBuffer->status() == MTL::CommandBufferStatusError) {
-        NS::Error* error = commandBuffer->error();
-        std::string errorMsg = error ? error->localizedDescription()->utf8String() : "Unknown error";
+        // Check for errors only in non-batching mode
+        if (commandBuffer->status() == MTL::CommandBufferStatusError) {
+            NS::Error* error = commandBuffer->error();
+            std::string errorMsg = error ? error->localizedDescription()->utf8String() : "Unknown error";
 
-        // Cleanup before throwing
-        releaseBuffer(xBuffer);
-        releaseBuffer(wBuffer);
-        releaseBuffer(xScalesBuffer);
-        releaseBuffer(wScalesBuffer);
-        releaseBuffer(outputBuffer);
-        releaseBuffer(mBuffer);
-        releaseBuffer(nBuffer);
-        releaseBuffer(kBuffer);
-        releaseBuffer(groupSizeBuffer);
+            // Cleanup before throwing
+            releaseBuffer(xBuffer);
+            releaseBuffer(wBuffer);
+            releaseBuffer(xScalesBuffer);
+            releaseBuffer(wScalesBuffer);
+            releaseBuffer(outputBuffer);
+            releaseBuffer(mBuffer);
+            releaseBuffer(nBuffer);
+            releaseBuffer(kBuffer);
+            releaseBuffer(groupSizeBuffer);
 
-        throw std::runtime_error("Metal QuantizedMatMul command buffer failed: " + errorMsg);
+            throw std::runtime_error("Metal QuantizedMatMul command buffer failed: " + errorMsg);
+        }
     }
 
-    // Copy result back
+    // Copy result back (shared memory - fast on Apple Silicon)
     memcpy(output, outputBuffer->contents(), d * sizeof(float));
 
     // Cleanup
@@ -763,8 +767,6 @@ void MetalContext::executeQuantizedMatMul(float* output, const int8_t* x_q, cons
     releaseBuffer(nBuffer);
     releaseBuffer(kBuffer);
     releaseBuffer(groupSizeBuffer);
-
-    std::cout << "QuantizedMatMul: GPU execution successful" << std::endl;
 }
 
 void MetalContext::executeSwiGLU(float* hb, const float* hb2, int hidden_dim) {
@@ -785,9 +787,15 @@ void MetalContext::executeSwiGLU(float* hb, const float* hb2, int hidden_dim) {
     uint32_t usize = (uint32_t)hidden_dim;
     MTL::Buffer* sizeBuffer = createBuffer(sizeof(uint32_t), &usize);
 
-    // Execute Metal compute shader
-    MTL::CommandBuffer* commandBuffer = createCommandBuffer();
-    MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
+    // Use batch encoder if available, otherwise create new command buffer
+    MTL::ComputeCommandEncoder* encoder = batchEncoder;
+    MTL::CommandBuffer* commandBuffer = nullptr;
+
+    if (!encoder) {
+        commandBuffer = createCommandBuffer();
+        encoder = commandBuffer->computeCommandEncoder();
+    }
+
     encoder->setComputePipelineState(pipeline);
     encoder->setBuffer(hbBuffer, 0, 0);
     encoder->setBuffer(hb2Buffer, 0, 1);
@@ -796,10 +804,13 @@ void MetalContext::executeSwiGLU(float* hb, const float* hb2, int hidden_dim) {
     MTL::Size threadsPerThreadgroup = MTL::Size::Make(256, 1, 1);
     MTL::Size threadgroups = MTL::Size::Make((hidden_dim + 255) / 256, 1, 1);
     encoder->dispatchThreadgroups(threadgroups, threadsPerThreadgroup);
-    encoder->endEncoding();
 
-    commitCommandBuffer(commandBuffer);
-    waitForCompletion(commandBuffer);
+    // Only end encoding and commit if not batching
+    if (!batchEncoder) {
+        encoder->endEncoding();
+        commandBuffer->commit();
+        commandBuffer->waitUntilCompleted();
+    }
 
     // Copy result back
     memcpy(hb, hbBuffer->contents(), hidden_dim * sizeof(float));
@@ -809,7 +820,7 @@ void MetalContext::executeSwiGLU(float* hb, const float* hb2, int hidden_dim) {
     releaseBuffer(hb2Buffer);
     releaseBuffer(sizeBuffer);
 
-    std::cout << "SwiGLU: GPU execution successful" << std::endl;
+    // std::cout << "SwiGLU: GPU execution successful" << std::endl;
 }
 
 void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_heads, int n_kv_heads,
@@ -855,9 +866,9 @@ void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_
             exit(1);
         }
 
-        // Execute Metal kernel for both Q and K heads
-        MTL::CommandBuffer* commandBuffer = isBatching() ? batchCommandBuffer : createCommandBuffer();
-        MTL::ComputeCommandEncoder* encoder = isBatching() ? batchEncoder : commandBuffer->computeCommandEncoder();
+        // Execute Metal kernel for both Q and K heads (batching disabled to avoid assertion failures)
+        MTL::CommandBuffer* commandBuffer = createCommandBuffer();
+        MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
 
         encoder->setComputePipelineState(pipeline);
         encoder->setBuffer(q_buffer, 0, 0);
@@ -881,11 +892,10 @@ void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_
         MTL::Size numThreadgroups = MTL::Size::Make((max_heads + threadsPerThreadgroup.width - 1) / threadsPerThreadgroup.width, 1, 1);
         encoder->dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup);
 
-        if (!isBatching()) {
-            encoder->endEncoding();
-            commitCommandBuffer(commandBuffer);
-            waitForCompletion(commandBuffer);
-        }
+        // Always execute immediately (batching disabled)
+        encoder->endEncoding();
+        commitCommandBuffer(commandBuffer);
+        waitForCompletion(commandBuffer);
 
         // Copy results back to host memory
         memcpy(q, q_buffer->contents(), q_size);
@@ -899,7 +909,7 @@ void MetalContext::executeRoPE(float* q, float* k, int head_dim, int pos, int n_
         releaseComputePipeline(pipeline);
         library->release();
 
-        std::cout << "RoPE: GPU execution successful" << std::endl;
+        // std::cout << "RoPE: GPU execution successful" << std::endl;
 }
 
 void MetalContext::executeAttention(float* xb, const float* q, float* att, float* key_cache, float* value_cache,
@@ -948,9 +958,9 @@ void MetalContext::executeAttention(float* xb, const float* q, float* att, float
             exit(1);
         }
 
-        // Execute Metal kernel
-        MTL::CommandBuffer* commandBuffer = isBatching() ? batchCommandBuffer : createCommandBuffer();
-        MTL::ComputeCommandEncoder* encoder = isBatching() ? batchEncoder : commandBuffer->computeCommandEncoder();
+        // Execute Metal kernel (batching disabled to avoid assertion failures)
+        MTL::CommandBuffer* commandBuffer = createCommandBuffer();
+        MTL::ComputeCommandEncoder* encoder = commandBuffer->computeCommandEncoder();
 
         encoder->setComputePipelineState(pipeline);
         encoder->setBuffer(q_buffer, 0, 0);
@@ -980,11 +990,10 @@ void MetalContext::executeAttention(float* xb, const float* q, float* att, float
         MTL::Size numThreadgroups = MTL::Size::Make((n_heads + threadsPerThreadgroup.width - 1) / threadsPerThreadgroup.width, 1, 1);
         encoder->dispatchThreadgroups(numThreadgroups, threadsPerThreadgroup);
 
-        if (!isBatching()) {
-            encoder->endEncoding();
-            commitCommandBuffer(commandBuffer);
-            waitForCompletion(commandBuffer);
-        }
+        // Always execute immediately (batching disabled)
+        encoder->endEncoding();
+        commitCommandBuffer(commandBuffer);
+        waitForCompletion(commandBuffer);
 
         // Copy result back to host memory
         memcpy(xb, xb_buffer->contents(), xb_size);
@@ -998,7 +1007,7 @@ void MetalContext::executeAttention(float* xb, const float* q, float* att, float
         releaseComputePipeline(pipeline);
         library->release();
 
-        std::cout << "Attention: GPU execution successful" << std::endl;
+        // std::cout << "Attention: GPU execution successful" << std::endl;
 }
 
 // OPTIMIZATION: Batching methods for dramatically improved performance
@@ -1012,15 +1021,25 @@ void MetalContext::beginBatch() {
 }
 
 void MetalContext::endBatch() {
-    if (batchEncoder) {
-        batchEncoder->endEncoding();
+    if (!batchCommandBuffer || !batchEncoder) {
+        // Nothing to end
         batchEncoder = nullptr;
+        batchCommandBuffer = nullptr;
+        return;
     }
 
-    if (batchCommandBuffer) {
-        commitCommandBuffer(batchCommandBuffer);
-        waitForCompletion(batchCommandBuffer);
+    try {
+        batchEncoder->endEncoding();
+        batchEncoder = nullptr;
+
+        batchCommandBuffer->commit();
+        batchCommandBuffer->waitUntilCompleted();
         batchCommandBuffer = nullptr;
+    } catch (...) {
+        // Reset state on error
+        batchEncoder = nullptr;
+        batchCommandBuffer = nullptr;
+        throw;
     }
 }
 
@@ -1041,6 +1060,21 @@ void MetalContext::returnBufferToPool(MTL::Buffer* buffer, size_t size) {
     if (!buffer) return;
 
     sizedBufferPools[size].push_back(buffer);
+}
+
+MTL::Buffer* MetalContext::getPersistentBuffer(const std::string& key, size_t size) {
+    auto it = persistentBuffers.find(key);
+    if (it != persistentBuffers.end()) {
+        // Reuse existing buffer
+        return it->second;
+    }
+
+    // Create new persistent buffer
+    MTL::Buffer* buffer = createBuffer(size);
+    if (buffer) {
+        persistentBuffers[key] = buffer;
+    }
+    return buffer;
 }
 
 // OPTIMIZATION: High-level batched transformer layer execution

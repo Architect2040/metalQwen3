@@ -68,8 +68,8 @@ void MetalQwen3::disableMetalBackend(const char* operation, const char* reason) 
 bool MetalQwen3::initialize() {
     if (metalContext && !metalContext->isInitialized()) {
         if (!metalContext->initialize()) {
-            std::cerr << "MetalQwen3: failed to initialize Metal context, continuing with CPU fallback" << std::endl;
-            metalContext.reset();
+            std::cerr << "MetalQwen3: failed to initialize Metal context" << std::endl;
+            return false;  // NO CPU FALLBACK!
         }
     }
     return true;
@@ -227,7 +227,10 @@ float* MetalQwen3::metal_forward(int token, int pos) {
     // copy the token embedding into s->x
     memcpy(s->x, w->token_embedding_table + token * p->dim, p->dim * sizeof(float));
 
-    // OPTIMIZATION: Forward all layers with batched Metal execution for 5-10x speedup
+    // Batching disabled: memcpy reads results before GPU executes (garbage output)
+    // TODO: Refactor to defer memcpy until after batch completion
+
+    // Forward all layers
     for (int l = 0; l < p->n_layers; l++) {
         // save key,value at this time step (pos) to our kv cache
         uint64_t loff = l * (uint64_t)p->seq_len * kv_dim; // kv cache layer offset for convenience
@@ -235,10 +238,8 @@ float* MetalQwen3::metal_forward(int token, int pos) {
         s->k = s->key_cache + loff + pos * kv_dim;
         s->v = s->value_cache + loff + pos * kv_dim;
 
-        // OPTIMIZATION: Begin batched execution for this entire layer
-        if (metalContext) {
-            metalContext->beginBatch();
-        }
+        // Batching disabled: memcpy reads results immediately, incompatible with deferred execution
+        // TODO: Refactor to keep buffers on GPU between operations for true batching
 
         // attention rmsnorm - HOTSPOT: use Metal
         metal_rmsnorm(s->xb, s->x, w->rms_att_weight + l * p->dim, p->dim);
@@ -249,11 +250,6 @@ float* MetalQwen3::metal_forward(int token, int pos) {
         metal_matmul(s->k, &s->xq, w->wk + l, p->dim, kv_dim);
         metal_matmul(s->v, &s->xq, w->wv + l, p->dim, kv_dim);
 
-        // End batch before CPU operations
-        if (metalContext) {
-            metalContext->endBatch();
-        }
-
         // Q-RMSNorm + rotate each query head - CPU for now (complex RoPE logic)
         metal_rope(s->q, s->k, p->head_dim, pos, p->n_heads, p->n_kv_heads, l);
 
@@ -261,10 +257,8 @@ float* MetalQwen3::metal_forward(int token, int pos) {
         metal_attention(s->xb, s->q, s->att, s->key_cache, s->value_cache, pos, p->head_dim,
                        p->n_heads, p->n_kv_heads, p->seq_len, kv_dim, loff, kv_mul);
 
-        // OPTIMIZATION: Begin batch for attention output and FFN
-        if (metalContext) {
-            metalContext->beginBatch();
-        }
+        // Batching disabled: memcpy reads results immediately, incompatible with deferred execution
+        // TODO: Refactor to keep buffers on GPU between operations for true batching
 
         // final matmul to get the output of the attention - HOTSPOT: use Metal
         quantize(&s->xq, s->xb, all_heads_dim);
@@ -289,11 +283,6 @@ float* MetalQwen3::metal_forward(int token, int pos) {
         // final matmul to get the output of the ffn - HOTSPOT: use Metal
         quantize(&s->hq, s->hb, p->hidden_dim);
         metal_matmul(s->xb, &s->hq, w->w2 + l, p->hidden_dim, p->dim);
-
-        // OPTIMIZATION: End FFN batch
-        if (metalContext) {
-            metalContext->endBatch();
-        }
 
         // residual connection (CPU - simple add)
         for (int i = 0; i < p->dim; i++)
